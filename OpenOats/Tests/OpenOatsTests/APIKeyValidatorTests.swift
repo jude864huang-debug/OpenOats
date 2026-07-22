@@ -2,6 +2,12 @@ import XCTest
 @testable import OpenOatsKit
 
 final class APIKeyValidatorTests: XCTestCase {
+    func testValidateOpenAIKeyRejectsEmptyKeyWithoutNetworkCall() async {
+        let result = await APIKeyValidator.validateOpenAIKey(" \n ")
+
+        XCTAssertEqual(result, .invalid(message: "API key 为空"))
+    }
+
     func testValidateElevenLabsKeyRejectsEmptyKey() async {
         let result = await APIKeyValidator.validateElevenLabsKey(" \n ")
 

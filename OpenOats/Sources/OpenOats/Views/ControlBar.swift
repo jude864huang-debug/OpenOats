@@ -19,6 +19,9 @@ struct ControlBar: View {
 
     let isRunning: Bool
     let audioLevel: Float
+    let micAudioLevel: Float
+    let systemAudioLevel: Float
+    let micHasCapturedFrames: Bool
     let recordingElapsedSeconds: Int
     let isMicMuted: Bool
     let isRecordingPaused: Bool
@@ -175,10 +178,8 @@ struct ControlBar: View {
                     .opacity(isRecordingPaused ? 0.3 : 1.0)
                     .disabled(isRecordingPaused)
 
-                    AudioLevelView(level: audioLevel)
-                        .frame(width: 40, height: 14)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .opacity(isRecordingPaused || isMicMuted ? 0.3 : 1.0)
+                    channelMeter(label: "Mic", level: micAudioLevel, active: micHasCapturedFrames && !isMicMuted)
+                    channelMeter(label: "对方", level: systemAudioLevel, active: systemAudioLevel > 0.002)
                 }
 
                 Spacer(minLength: 6)
@@ -199,6 +200,19 @@ struct ControlBar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
+    }
+
+    private func channelMeter(label: String, level: Float, active: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Circle().fill(active ? Color.green : Color.secondary.opacity(0.45)).frame(width: 5, height: 5)
+                Text(label).font(.system(size: 8, weight: .medium)).foregroundStyle(.secondary)
+            }
+            AudioLevelView(level: level).frame(width: 34, height: 8)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .opacity(isRecordingPaused || (label == "Mic" && isMicMuted) ? 0.3 : 1.0)
+        .help(label == "Mic" ? "候选人麦克风电平；绿点表示已收到音频帧" : "面试官系统音频电平")
     }
 
     private var shouldShowStatusArea: Bool {

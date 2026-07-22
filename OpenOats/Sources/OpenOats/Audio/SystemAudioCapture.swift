@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-import Accelerate
 import AudioToolbox
 import CoreAudio
 import Dispatch
@@ -92,11 +91,21 @@ final class SystemAudioCapture: @unchecked Sendable {
 
     private let _audioLevel = AudioLevel()
     private let _hasCapturedFrames = SyncBool()
+    private let _lastFrameTimestamp = SyncDouble()
+    private let _sampleRate = SyncDouble()
     private let _paused = SyncBool()
 
     /// Thread-safe audio level (0…1) from the system audio stream.
     var audioLevel: Float { _paused.value ? 0 : _audioLevel.value }
     var hasCapturedFrames: Bool { _hasCapturedFrames.value }
+    var lastFrameAt: Date? {
+        let value = _lastFrameTimestamp.value
+        return value > 0 ? Date(timeIntervalSince1970: value) : nil
+    }
+    var sampleRate: Double? {
+        let value = _sampleRate.value
+        return value > 0 ? value : nil
+    }
 
     /// When paused, buffers are not forwarded to the stream and audio level reads as 0.
     var isPaused: Bool {
@@ -198,6 +207,8 @@ final class SystemAudioCapture: @unchecked Sendable {
             self._sysContinuation.withLock { $0 = continuation }
         }
         _hasCapturedFrames.value = false
+        _lastFrameTimestamp.value = 0
+        _sampleRate.value = 0
 
         let resolvedDeviceID: AudioDeviceID
         let requestedOutputDeviceAvailable: Bool?
@@ -482,6 +493,8 @@ final class SystemAudioCapture: @unchecked Sendable {
         finishStream()
         _audioLevel.value = 0
         _hasCapturedFrames.value = false
+        _lastFrameTimestamp.value = 0
+        _sampleRate.value = 0
 
         let aggregateDeviceID = _aggregateDeviceID.withLock { state -> AudioObjectID in
             let current = state
@@ -554,13 +567,14 @@ final class SystemAudioCapture: @unchecked Sendable {
             destinationBuffers[index].mDataByteSize = UInt32(copySize)
         }
 
-        // Compute RMS audio level for the UI visualisation.
-        if let channelData = pcmBuffer.floatChannelData, pcmBuffer.frameLength > 0 {
-            var rms: Float = 0
-            vDSP_rmsqv(channelData[0], 1, &rms, vDSP_Length(pcmBuffer.frameLength))
-            _audioLevel.value = min(rms * 25, 1.0)
-        }
+        // Use the same multi-format RMS path as microphone capture. Process
+        // taps may negotiate Float32, Int16, or Int32 even though every format
+        // can still be forwarded successfully to transcription.
+        let rms = MicCapture.normalizedRMS(from: pcmBuffer)
+        _audioLevel.value = min(rms * 25, 1.0)
         _hasCapturedFrames.value = true
+        _lastFrameTimestamp.value = Date().timeIntervalSince1970
+        _sampleRate.value = pcmBuffer.format.sampleRate
 
         guard !_paused.value else { return }
         _ = _sysContinuation.withLock { $0?.yield(pcmBuffer) }

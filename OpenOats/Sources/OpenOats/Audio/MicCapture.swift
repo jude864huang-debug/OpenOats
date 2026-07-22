@@ -15,6 +15,8 @@ final class MicCapture: @unchecked Sendable {
     private var configChangeObserver: NSObjectProtocol?
     private let _audioLevel = AudioLevel()
     private let _hasCapturedFrames = SyncBool()
+    private let _lastFrameTimestamp = SyncDouble()
+    private let _sampleRate = SyncDouble()
     private let _error = SyncString()
     private let _streamContinuation = OSAllocatedUnfairLock<AsyncStream<AVAudioPCMBuffer>.Continuation?>(uncheckedState: nil)
     private let _muted = SyncBool()
@@ -22,6 +24,14 @@ final class MicCapture: @unchecked Sendable {
 
     var audioLevel: Float { (_muted.value || _paused.value) ? 0 : _audioLevel.value }
     var hasCapturedFrames: Bool { _hasCapturedFrames.value }
+    var lastFrameAt: Date? {
+        let value = _lastFrameTimestamp.value
+        return value > 0 ? Date(timeIntervalSince1970: value) : nil
+    }
+    var sampleRate: Double? {
+        let value = _sampleRate.value
+        return value > 0 ? value : nil
+    }
     var captureError: String? { _error.value }
 
     /// When muted, buffers are not forwarded to the stream and audio level reads as 0.
@@ -67,6 +77,8 @@ final class MicCapture: @unchecked Sendable {
             self._streamContinuation.withLock { $0 = continuation }
             errorHolder.value = nil
             self._hasCapturedFrames.value = false
+            self._lastFrameTimestamp.value = 0
+            self._sampleRate.value = 0
 
             Log.mic.info("bufferStream called, deviceID=\(String(describing: deviceID), privacy: .public)")
 
@@ -136,30 +148,21 @@ final class MicCapture: @unchecked Sendable {
                 continuation.finish()
                 return
             }
+            self._sampleRate.value = sampleRate
 
-            // Try multiple tap formats — some devices report formats that don't
-            // round-trip through AVAudioFormat(standardFormat:). Fall back to the
-            // native input format as a last resort.
-            let tapFormat: AVAudioFormat
-            if let f = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: format.channelCount) {
-                tapFormat = f
-            } else if sampleRate != format.sampleRate,
-                      let f = AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: format.channelCount) {
-                Log.mic.info("Hardware-rate format failed, using node rate \(format.sampleRate, privacy: .public)")
-                tapFormat = f
-            } else {
-                Log.mic.info("Standard formats failed, using native input format")
-                tapFormat = format
-            }
-
-            Log.mic.info("tapFormat: sr=\(tapFormat.sampleRate, privacy: .public) ch=\(tapFormat.channelCount, privacy: .public)")
+            // A nil tap format asks AVAudioEngine to use the input node's native
+            // negotiated format. Constructing a new "standard" format can start
+            // successfully yet deliver no buffers on aggregate/virtual CoreAudio
+            // configurations.
+            Log.mic.info("tapFormat: native input format")
 
             let muted = self._muted
             let paused = self._paused
             var tapCallCount = 0
-            inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
                 tapCallCount += 1
                 self._hasCapturedFrames.value = true
+                self._lastFrameTimestamp.value = Date().timeIntervalSince1970
                 let rms = Self.normalizedRMS(from: buffer)
                 level.value = min(rms * 25, 1.0)
 
@@ -242,6 +245,8 @@ final class MicCapture: @unchecked Sendable {
         engine.reset()
         _audioLevel.value = 0
         _hasCapturedFrames.value = false
+        _lastFrameTimestamp.value = 0
+        _sampleRate.value = 0
     }
 
     private func makeFreshEngine() -> AVAudioEngine {
@@ -271,7 +276,7 @@ final class MicCapture: @unchecked Sendable {
         }
     }
 
-    private static func normalizedRMS(from buffer: AVAudioPCMBuffer) -> Float {
+    static func normalizedRMS(from buffer: AVAudioPCMBuffer) -> Float {
         let frameLength = Int(buffer.frameLength)
         guard frameLength > 0 else { return 0 }
 
@@ -300,25 +305,67 @@ final class MicCapture: @unchecked Sendable {
         // Int16 fallback — convert to float, then vDSP
         // Rare in practice (mic is typically Float32)
         if let channelData = buffer.int16ChannelData {
-            var floats = [Float](repeating: 0, count: frameLength)
-            vDSP_vflt16(channelData[0], 1, &floats, 1, vDSP_Length(frameLength))
-            var scale: Float = 1 / Float(Int16.max)
-            vDSP_vsmul(floats, 1, &scale, &floats, 1, vDSP_Length(frameLength))
-            var rms: Float = 0
-            vDSP_rmsqv(floats, 1, &rms, vDSP_Length(frameLength))
-            return rms
+            let channelCount = max(Int(buffer.format.channelCount), 1)
+            if buffer.format.isInterleaved {
+                return normalizedInt16RMS(
+                    channelData[0],
+                    sampleCount: frameLength * channelCount
+                )
+            }
+            var summedEnergy: Float = 0
+            for channel in 0..<channelCount {
+                let rms = normalizedInt16RMS(channelData[channel], sampleCount: frameLength)
+                summedEnergy += rms * rms
+            }
+            return sqrt(summedEnergy / Float(channelCount))
         }
 
         if let channelData = buffer.int32ChannelData {
-            let scale: Float = 1 / Float(Int32.max)
-            var floats = [Float](repeating: 0, count: frameLength)
-            for i in 0..<frameLength { floats[i] = Float(channelData[0][i]) * scale }
-            var rms: Float = 0
-            vDSP_rmsqv(floats, 1, &rms, vDSP_Length(frameLength))
-            return rms
+            let channelCount = max(Int(buffer.format.channelCount), 1)
+            if buffer.format.isInterleaved {
+                return normalizedInt32RMS(
+                    channelData[0],
+                    sampleCount: frameLength * channelCount
+                )
+            }
+            var summedEnergy: Float = 0
+            for channel in 0..<channelCount {
+                let rms = normalizedInt32RMS(channelData[channel], sampleCount: frameLength)
+                summedEnergy += rms * rms
+            }
+            return sqrt(summedEnergy / Float(channelCount))
         }
 
         return 0
+    }
+
+    private static func normalizedInt16RMS(
+        _ samples: UnsafePointer<Int16>,
+        sampleCount: Int
+    ) -> Float {
+        guard sampleCount > 0 else { return 0 }
+        var floats = [Float](repeating: 0, count: sampleCount)
+        vDSP_vflt16(samples, 1, &floats, 1, vDSP_Length(sampleCount))
+        var scale: Float = 1 / Float(Int16.max)
+        vDSP_vsmul(floats, 1, &scale, &floats, 1, vDSP_Length(sampleCount))
+        var rms: Float = 0
+        vDSP_rmsqv(floats, 1, &rms, vDSP_Length(sampleCount))
+        return rms
+    }
+
+    private static func normalizedInt32RMS(
+        _ samples: UnsafePointer<Int32>,
+        sampleCount: Int
+    ) -> Float {
+        guard sampleCount > 0 else { return 0 }
+        let scale: Float = 1 / Float(Int32.max)
+        var floats = [Float](repeating: 0, count: sampleCount)
+        for index in 0..<sampleCount {
+            floats[index] = Float(samples[index]) * scale
+        }
+        var rms: Float = 0
+        vDSP_rmsqv(floats, 1, &rms, vDSP_Length(sampleCount))
+        return rms
     }
 
     // MARK: - List available input devices

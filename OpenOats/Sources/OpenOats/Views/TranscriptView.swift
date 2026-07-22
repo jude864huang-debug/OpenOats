@@ -29,6 +29,7 @@ struct TranscriptView: View {
             }
             transcriptScrollView
         }
+        .frame(minHeight: 0, maxHeight: .infinity)
     }
 
     private var searchBar: some View {
@@ -116,39 +117,51 @@ struct TranscriptView: View {
                                 VolatileIndicator(text: volatileThemText, speaker: .them)
                                     .id("volatile-them")
                             }
+
+                            Color.clear
+                                .frame(height: 1)
+                                .id("transcript-bottom")
                         }
                     }
                     .padding(16)
                 }
             }
+            .frame(minHeight: 0, maxHeight: .infinity)
+            .clipped()
+            .accessibilityIdentifier("transcript.scrollView")
+            .onAppear {
+                guard !isSearching, autoScrollEnabled else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
+            }
             .onChange(of: utterances.count) {
                 guard !isSearching, autoScrollEnabled else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
-                    if let last = utterances.last {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
             }
             .onChange(of: volatileYouText) {
                 guard !isSearching, autoScrollEnabled else { return }
-                proxy.scrollTo("volatile-you", anchor: .bottom)
+                proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
             .onChange(of: volatileThemText) {
                 guard !isSearching, autoScrollEnabled else { return }
-                proxy.scrollTo("volatile-them", anchor: .bottom)
+                proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
             .onChange(of: searchText) {
-                if searchText.isEmpty, autoScrollEnabled, let last = utterances.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                if searchText.isEmpty, autoScrollEnabled {
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
                 if !autoScrollEnabled {
                     Button {
                         autoScrollEnabled = true
-                        if let last = utterances.last {
+                        if !utterances.isEmpty || !volatileYouText.isEmpty || !volatileThemText.isEmpty {
                             withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo(last.id, anchor: .bottom)
+                                proxy.scrollTo("transcript-bottom", anchor: .bottom)
                             }
                         }
                     } label: {

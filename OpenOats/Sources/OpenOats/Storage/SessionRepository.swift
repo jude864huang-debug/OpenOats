@@ -172,6 +172,7 @@ struct SessionMetadata: Codable, Sendable {
 /// sessions/<id>/transcript.final.jsonl
 /// sessions/<id>/notes.md
 /// sessions/<id>/notes.meta.json
+/// sessions/<id>/interview-ai-answers.json
 /// sessions/<id>/attachments/
 /// sessions/<id>/audio/
 /// ```
@@ -717,6 +718,32 @@ actor SessionRepository {
             generatedAt: meta.generatedAt,
             markdown: markdown
         )
+    }
+
+    // MARK: - Interview AI Answers
+
+    /// Retains only final validated complete answers for the session. Reusing a
+    /// request ID replaces that record instead of duplicating it.
+    func saveInterviewAnswer(sessionID: String, record: InterviewHistoryAnswer) {
+        let dir = sessionDirectory(for: sessionID)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("interview-ai-answers.json")
+        var records = Self.readInterviewAnswers(dir: dir)
+        records.removeAll { $0.id == record.id }
+        records.append(record)
+        records.sort { $0.createdAt < $1.createdAt }
+        guard let data = try? encoder.encode(records) else { return }
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            Log.sessionRepository.error(
+                "Failed to retain interview AI answer: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    func loadInterviewAnswers(sessionID: String) -> [InterviewHistoryAnswer] {
+        Self.readInterviewAnswers(dir: sessionDirectory(for: sessionID))
     }
 
     func importAttachment(sessionID: String, sourceURL: URL) -> NoteAttachment? {
@@ -1588,7 +1615,8 @@ actor SessionRepository {
         audioURL: URL?,
         audioSources: [SessionAudioSource],
         calendarEvent: CalendarEvent?,
-        attachments: [NoteAttachment]
+        attachments: [NoteAttachment],
+        interviewAnswers: [InterviewHistoryAnswer]
     ) {
         let sessDir = sessionsDirectoryURL
         let dir = sessDir.appendingPathComponent(sessionID, isDirectory: true)
@@ -1608,6 +1636,9 @@ actor SessionRepository {
         async let attachments = Task.detached(priority: .userInitiated) {
             SessionRepository.readNoteAttachments(dir: dir)
         }.value
+        async let interviewAnswers = Task.detached(priority: .userInitiated) {
+            SessionRepository.readInterviewAnswers(dir: dir)
+        }.value
 
         let resolvedAudioSources = await audioSources
         return await (
@@ -1616,8 +1647,20 @@ actor SessionRepository {
             resolvedAudioSources.first?.url,
             resolvedAudioSources,
             calendarEvent,
-            attachments
+            attachments,
+            interviewAnswers
         )
+    }
+
+    private nonisolated static func readInterviewAnswers(dir: URL) -> [InterviewHistoryAnswer] {
+        let url = dir.appendingPathComponent("interview-ai-answers.json")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: url),
+              let records = try? decoder.decode([InterviewHistoryAnswer].self, from: data) else {
+            return []
+        }
+        return records.sorted { $0.createdAt < $1.createdAt }
     }
 
     private nonisolated static func readNotes(sessionID: String, dir: URL, sessionsDirectory: URL) -> GeneratedNotes? {

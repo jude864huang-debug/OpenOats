@@ -16,7 +16,7 @@ final class MiniBarPanel: NSPanel {
         isFloatingPanel = true
         level = .floating
         let hidden = defaults.object(forKey: "hideFromScreenShare") == nil
-            ? true
+            ? false
             : defaults.bool(forKey: "hideFromScreenShare")
         sharingType = hidden ? .none : .readOnly
         isMovableByWindowBackground = true

@@ -3,6 +3,7 @@ import Foundation
 enum UITestScenario: String {
     case launchSmoke
     case sessionSmoke
+    case interviewLensSmoke
     case notesSmoke
     case wizardSmoke
 }
@@ -16,6 +17,7 @@ struct AppViewServices {
     let knowledgeBase: KnowledgeBase
     let suggestionEngine: SuggestionEngine
     let sidecastEngine: SidecastEngine
+    let customerCopilotEngine: CustomerCopilotEngine
 }
 
 struct AppRecordingServices {

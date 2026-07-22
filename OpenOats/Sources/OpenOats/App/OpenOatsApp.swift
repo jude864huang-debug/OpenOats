@@ -6,11 +6,13 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 enum OpenOatsWindowSizing {
+    static let mainWindowFrameAutosaveName = "OpenOatsMainWindow"
     static let homeTimelinePaneMinWidth: CGFloat = 340
     static let meetingDetailPaneMinWidth: CGFloat = 700
     static let notesWorkspaceSidebarWidth: CGFloat = 250
     static let mainWindowCollapsedMinSize = CGSize(width: 520, height: 560)
     static let mainWindowExpandedMinSize = CGSize(width: 1080, height: 560)
+    static let interviewWorkspaceMinSize = CGSize(width: 860, height: 620)
     static let notesWorkspaceMinSize = CGSize(width: 980, height: 560)
 }
 
@@ -123,7 +125,7 @@ public struct OpenOatsRootApp: App {
                 .disabled(coordinator.isRecording || isBatchEngineBusy)
 
                 Button("GitHub Repository...") {
-                    if let url = URL(string: "https://github.com/yazinsai/OpenOats") {
+                    if let url = URL(string: "https://github.com/jude864huang-debug/OpenOats") {
                         NSWorkspace.shared.open(url)
                     }
                 }
@@ -398,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let hidden = defaults.object(forKey: "hideFromScreenShare") == nil
-            ? true
+            ? false
             : defaults.bool(forKey: "hideFromScreenShare")
         let sharingType: NSWindow.SharingType = hidden ? .none : .readOnly
 
@@ -419,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ) { _ in
             Task { @MainActor in
                 let hide = self.defaults.object(forKey: "hideFromScreenShare") == nil
-                    ? true
+                    ? false
                     : self.defaults.bool(forKey: "hideFromScreenShare")
                 let type: NSWindow.SharingType = hide ? .none : .readOnly
                 for window in NSApp.windows {
@@ -592,17 +594,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let coordinator, let settings else { return }
         guard settings.hasAcknowledgedRecordingConsent else { return }
 
-        container?.ensureMeetingServicesInitialized(settings: settings, coordinator: coordinator)
-
         if coordinator.isRecording {
-            coordinator.handle(.userStopped, settings: settings)
+            if let controller = coordinator.liveSessionController {
+                controller.stopSession(settings: settings)
+            } else {
+                coordinator.queueExternalCommand(.stopSession)
+            }
         } else {
             let calEvent = settings.calendarIntegrationEnabled
                 ? container?.calendarManager?.currentEvent(
                     excludingCalendarIDs: settings.excludedCalendarIDs
                 )
                 : nil
-            coordinator.handle(.userStarted(.manual(calendarEvent: calEvent)), settings: settings)
+            if let controller = coordinator.liveSessionController {
+                controller.startSession(settings: settings, calendarEventOverride: calEvent)
+            } else {
+                // The menu command can arrive while SwiftUI is still creating the
+                // controller. Queue it instead of transitioning the coordinator
+                // without a controller available to perform the start side effects.
+                coordinator.queueExternalCommand(.startSession(calendarEvent: calEvent))
+            }
         }
     }
 

@@ -44,7 +44,7 @@
     <key>LSMultipleInstancesProhibited</key>
     <true/>
     <key>SUFeedURL</key>
-    <string>https://raw.githubusercontent.com/yazinsai/OpenOats/gh-pages/appcast.xml</string>
+    <string>https://raw.githubusercontent.com/jude864huang-debug/OpenOats/gh-pages/appcast.xml</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUPublicEDKey</key>

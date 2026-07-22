@@ -463,10 +463,12 @@ struct HomeTimelineWorkspaceView: View {
             : OpenOatsWindowSizing.mainWindowCollapsedMinSize
         window.contentMinSize = minimumSize
 
+        // Closing the detail pane should not discard a size the user chose.
+        // AppKit's frame autosave will carry that size across launches.
+        guard detailVisible else { return }
+
         let currentFrame = window.frame
-        let newWidth = detailVisible
-            ? max(currentFrame.width, minimumSize.width)
-            : min(currentFrame.width, minimumSize.width)
+        let newWidth = max(currentFrame.width, minimumSize.width)
         let newHeight = max(currentFrame.height, minimumSize.height)
         guard abs(newWidth - currentFrame.width) > 8 || abs(newHeight - currentFrame.height) > 8 else {
             return

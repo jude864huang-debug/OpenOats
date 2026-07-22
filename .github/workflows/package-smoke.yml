@@ -22,15 +22,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install and test Codex worker
+        run: |
+          npm --prefix worker ci --omit=dev
+          npm --prefix worker test
+
       - name: Select Xcode 26
         run: bash "${{ github.workspace }}/scripts/select_xcode_26.sh"
 
-      - name: Build and assemble app bundle (no sign, no install)
-        run: SKIP_SIGN=1 SKIP_INSTALL=1 ./scripts/build_swift_app.sh
-
-      - name: Verify app bundle structure
-        run: |
-          test -f dist/OpenOats.app/Contents/MacOS/OpenOats
-          test -f dist/OpenOats.app/Contents/Info.plist
-          test -f dist/OpenOats.app/Contents/PkgInfo
-          echo "App bundle structure verified"
+      - name: Build and verify distributable app bundle
+        run: bash ./scripts/package_smoke_check.sh

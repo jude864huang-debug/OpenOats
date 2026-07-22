@@ -60,6 +60,11 @@ struct CaptureHealthSnapshot: Sendable, Equatable {
     let micHasCapturedFrames: Bool
     let systemHasCapturedFrames: Bool
     let micCaptureError: String?
+    let micLastFrameAt: Date?
+    let systemLastFrameAt: Date?
+    let micSampleRate: Double?
+    let systemSampleRate: Double?
+    let microphonePermissionGranted: Bool
 }
 
 /// Orchestrates dual StreamingTranscriber instances for mic (you) and system audio (them).
@@ -171,6 +176,22 @@ final class TranscriptionEngine {
         }
     }
 
+    /// Per-channel levels used by the interview preflight UI. Keeping these separate
+    /// makes it possible to verify that the candidate microphone is actually active.
+    nonisolated var micAudioLevel: Float {
+        switch mode {
+        case .live: micCapture.audioLevel
+        case .scripted: _isRunning ? 0.25 : 0
+        }
+    }
+
+    nonisolated var systemAudioLevel: Float {
+        switch mode {
+        case .live: systemCapture.audioLevel
+        case .scripted: _isRunning ? 0.35 : 0
+        }
+    }
+
     /// Mute/unmute the microphone. When muted, mic audio is not transcribed
     /// and the audio level reads as 0. System audio continues normally.
     nonisolated var isMicMuted: Bool {
@@ -192,12 +213,19 @@ final class TranscriptionEngine {
         CaptureHealthSnapshot(
             micHasCapturedFrames: micCapture.hasCapturedFrames,
             systemHasCapturedFrames: systemCapture.hasCapturedFrames,
-            micCaptureError: micCapture.captureError
+            micCaptureError: micCapture.captureError,
+            micLastFrameAt: micCapture.lastFrameAt,
+            systemLastFrameAt: systemCapture.lastFrameAt,
+            micSampleRate: micCapture.sampleRate,
+            systemSampleRate: systemCapture.sampleRate,
+            microphonePermissionGranted: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         )
     }
 
     private var micTask: Task<Void, Never>?
     private var sysTask: Task<Void, Never>?
+    @ObservationIgnored nonisolated(unsafe) private var realtimeInterviewAudioSink: (@Sendable (RealtimeAudioChunk, RealtimeInterviewRole) async -> Void)?
+    @ObservationIgnored nonisolated(unsafe) private var manualInterviewAudioSink: (@Sendable (InterviewAudioChunk, InterviewRole) async -> Void)?
     /// Keeps the mic stream alive for the audio level meter when transcription isn't running.
     private var micKeepAliveTask: Task<Void, Never>?
 
@@ -211,6 +239,32 @@ final class TranscriptionEngine {
 
     /// Audio recorder for tapping streams (set by ContentView when recording is enabled).
     var audioRecorder: AudioRecorder?
+
+    func setRealtimeInterviewAudioSink(
+        _ sink: (@Sendable (RealtimeAudioChunk, RealtimeInterviewRole) async -> Void)?
+    ) {
+        realtimeInterviewAudioSink = sink
+        if sink != nil { manualInterviewAudioSink = nil }
+        if sink != nil {
+            needsModelDownload = false
+            downloadConfirmed = false
+        } else {
+            refreshModelAvailability()
+        }
+    }
+
+    func setManualInterviewAudioSink(
+        _ sink: (@Sendable (InterviewAudioChunk, InterviewRole) async -> Void)?
+    ) {
+        manualInterviewAudioSink = sink
+        if sink != nil { realtimeInterviewAudioSink = nil }
+        if sink != nil {
+            needsModelDownload = false
+            downloadConfirmed = false
+        } else if realtimeInterviewAudioSink == nil {
+            refreshModelAvailability()
+        }
+    }
 
     /// Speaker diarization manager for system audio (nil when diarization is disabled).
     private var diarizationManager: DiarizationManager?
@@ -381,6 +435,10 @@ final class TranscriptionEngine {
     ) async {
         Log.transcription.info("start() called, isRunning=\(self.isRunning, privacy: .public)")
         guard !isRunning, downloadProgress == nil else { return }
+        // A fresh recording session always starts live. Device hot-swaps call
+        // capture.stop() without reaching this entry point, so they retain the
+        // current session's pause choice.
+        isRecordingPaused = false
         lastError = nil
         liveCloudTranscriptIssue = nil
         liveCloudTranscriptionIsProcessing = false
@@ -393,6 +451,41 @@ final class TranscriptionEngine {
             for utterance in scriptedUtterances {
                 transcriptStore.append(utterance)
             }
+            return
+        }
+
+        // Interview audio modes send both native capture channels to a dedicated
+        // role-aware router. Do not load a local ASR model or VAD for this path.
+        if realtimeInterviewAudioSink != nil || manualInterviewAudioSink != nil {
+            activeTranscriptionSession = ActiveTranscriptionSession(
+                sessionID: sessionID,
+                transcriptionModel: transcriptionModel
+            )
+            guard await ensureMicrophonePermission() else {
+                activeTranscriptionSession = nil
+                return
+            }
+            isRunning = true
+            assetStatus = manualInterviewAudioSink == nil
+                ? "Starting GPT Realtime audio…"
+                : "Starting interview audio…"
+            guard let targetMicID = resolvedMicDeviceID(for: inputDeviceID) else {
+                lastError = unavailableMicMessage(for: inputDeviceID)
+                activeTranscriptionSession = nil
+                isRunning = false
+                assetStatus = "Ready"
+                return
+            }
+            userSelectedDeviceID = inputDeviceID
+            currentMicDeviceID = targetMicID
+            startRealtimeMicCapture(deviceID: inputDeviceID == 0 ? nil : targetMicID)
+            await startRealtimeSystemCapture()
+            installDefaultDeviceListener()
+            installDefaultOutputDeviceListener()
+            scheduleInterviewMicHealthCheck(inputDeviceID: inputDeviceID, resolvedDeviceID: targetMicID)
+            assetStatus = manualInterviewAudioSink == nil
+                ? "GPT Realtime audio active"
+                : "Interview audio active"
             return
         }
 
@@ -535,7 +628,10 @@ final class TranscriptionEngine {
         startMicStream(
             locale: locale,
             vadManager: vadManager,
-            deviceID: targetMicID,
+            // Let AVAudioEngine own routing when the user selected System
+            // Default. Forcing the current CoreAudio ID can produce a running
+            // engine with no input buffers on some macOS configurations.
+            deviceID: inputDeviceID == 0 ? nil : targetMicID,
             echoCancellation: useAEC
         )
 
@@ -570,7 +666,10 @@ final class TranscriptionEngine {
                 self.startMicStream(
                     locale: locale,
                     vadManager: vadManager,
-                    deviceID: targetMicID,
+                    // Retry with the opposite routing strategy. System Default
+                    // first uses native routing, then its resolved device ID;
+                    // an explicitly selected device falls back to native routing.
+                    deviceID: inputDeviceID == 0 ? targetMicID : nil,
                     echoCancellation: false
                 )
 
@@ -587,7 +686,8 @@ final class TranscriptionEngine {
                     hasRetried: true
                 ) == .showNoAudioError {
                     Log.transcription.error("No mic audio after retry")
-                    self.lastError = "Microphone is not producing audio. Check your input device in System Settings."
+                    let permission = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized ? "authorized" : "not-authorized"
+                    self.lastError = "Microphone produced no audio after native and explicit routing attempts (permission: \(permission), default device ID: \(targetMicID)). Try selecting MacBook Air Microphone explicitly in Settings > Transcription."
                 }
             }
         }
@@ -840,7 +940,7 @@ final class TranscriptionEngine {
     }
 
     private func performMicRestart(inputDeviceID: AudioDeviceID) async {
-        guard isRunning, let vadManager else { return }
+        guard isRunning else { return }
 
         userSelectedDeviceID = inputDeviceID
 
@@ -851,7 +951,7 @@ final class TranscriptionEngine {
             return
         }
 
-        guard targetMicID != currentMicDeviceID else {
+        guard inputDeviceID == 0 || targetMicID != currentMicDeviceID else {
             Log.transcription.debug("Mic swap skipped, same device \(targetMicID, privacy: .public)")
             return
         }
@@ -873,11 +973,18 @@ final class TranscriptionEngine {
             return
         }
 
-        startMicStream(
-            locale: settings.locale,
-            vadManager: vadManager,
-            deviceID: targetMicID
-        )
+        if realtimeInterviewAudioSink != nil || manualInterviewAudioSink != nil {
+            startRealtimeMicCapture(deviceID: inputDeviceID == 0 ? nil : targetMicID)
+        } else if let vadManager {
+            startMicStream(
+                locale: settings.locale,
+                vadManager: vadManager,
+                deviceID: inputDeviceID == 0 ? nil : targetMicID
+            )
+        } else {
+            lastError = "Microphone restart failed because the transcription pipeline is unavailable."
+            return
+        }
         currentMicDeviceID = targetMicID
         lastError = nil
 
@@ -905,7 +1012,7 @@ final class TranscriptionEngine {
     }
 
     private func performSystemAudioRestart() async {
-        guard isRunning, let vadManager else { return }
+        guard isRunning else { return }
 
         Log.transcription.info("Restarting system audio stream")
 
@@ -918,7 +1025,14 @@ final class TranscriptionEngine {
 
         sysTask = nil
         await systemCapture.stop()
-        await startSystemAudioStream(locale: settings.locale, vadManager: vadManager)
+        if realtimeInterviewAudioSink != nil || manualInterviewAudioSink != nil {
+            await startRealtimeSystemCapture()
+        } else if let vadManager {
+            await startSystemAudioStream(locale: settings.locale, vadManager: vadManager)
+        } else {
+            lastError = "System audio restart failed because the transcription pipeline is unavailable."
+            return
+        }
 
         Log.transcription.info("System audio stream restarted")
         scheduleSystemAudioWatchdog()
@@ -951,7 +1065,7 @@ final class TranscriptionEngine {
     private func startMicStream(
         locale: Locale,
         vadManager: VadManager,
-        deviceID: AudioDeviceID,
+        deviceID: AudioDeviceID?,
         echoCancellation: Bool = false
     ) {
         var micStream = micCapture.bufferStream(deviceID: deviceID, echoCancellation: echoCancellation)
@@ -983,6 +1097,84 @@ final class TranscriptionEngine {
         }
         micTask = Task.detached {
             await micTranscriber.run(stream: micStream)
+        }
+    }
+
+    private func startRealtimeMicCapture(deviceID: AudioDeviceID?) {
+        let stream = micCapture.bufferStream(deviceID: deviceID, echoCancellation: false)
+        if let sink = manualInterviewAudioSink {
+            micTask = Task.detached {
+                for await buffer in stream {
+                    guard let chunk = InterviewPCMEncoder.encode(buffer) else { continue }
+                    await sink(chunk, .candidate)
+                }
+            }
+        } else if let sink = realtimeInterviewAudioSink {
+            micTask = Task.detached {
+                for await buffer in stream {
+                    guard let chunk = RealtimePCMEncoder.encode(buffer) else { continue }
+                    await sink(chunk, .candidate)
+                }
+            }
+        }
+    }
+
+    private func startRealtimeSystemCapture() async {
+        do {
+            let outputID: AudioDeviceID? = settings.outputDeviceID == 0 ? nil : settings.outputDeviceID
+            let streams = try await systemCapture.bufferStream(outputDeviceID: outputID)
+            if let sink = manualInterviewAudioSink {
+                sysTask = Task.detached {
+                    for await buffer in streams.systemAudio {
+                        guard let chunk = InterviewPCMEncoder.encode(buffer) else { continue }
+                        await sink(chunk, .interviewer)
+                    }
+                }
+            } else if let sink = realtimeInterviewAudioSink {
+                sysTask = Task.detached {
+                    for await buffer in streams.systemAudio {
+                        guard let chunk = RealtimePCMEncoder.encode(buffer) else { continue }
+                        await sink(chunk, .interviewer)
+                    }
+                }
+            }
+        } catch {
+            lastError = "Failed to start interview system audio: \(error.localizedDescription)"
+        }
+    }
+
+    private func scheduleInterviewMicHealthCheck(
+        inputDeviceID: AudioDeviceID,
+        resolvedDeviceID: AudioDeviceID?
+    ) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, self.isRunning,
+                  self.realtimeInterviewAudioSink != nil || self.manualInterviewAudioSink != nil,
+                  !self.micCapture.hasCapturedFrames else { return }
+
+            if let error = self.micCapture.captureError {
+                self.lastError = error
+                return
+            }
+
+            self.lastError = "麦克风已授权，但没有收到任何音频帧；正在尝试重新连接输入设备。"
+            self.micCapture.finishStream()
+            self.micTask?.cancel()
+            self.micTask = nil
+            self.micCapture.stop()
+            let retryDevice: AudioDeviceID? = inputDeviceID == 0 ? resolvedDeviceID : nil
+            self.startRealtimeMicCapture(deviceID: retryDevice)
+
+            try? await Task.sleep(for: .seconds(3))
+            guard self.isRunning, !self.micCapture.hasCapturedFrames else {
+                self.lastError = nil
+                return
+            }
+            let permission = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                ? "已授权"
+                : "未授权"
+            self.lastError = "麦克风没有返回音频帧（权限：\(permission)）。请在设置的音频自检中改选输入设备。"
         }
     }
 

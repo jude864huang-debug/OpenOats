@@ -81,6 +81,48 @@ final class SessionRepositoryTests: XCTestCase {
         await repo.deleteSession(sessionID: handle.sessionID)
     }
 
+    func testInterviewHistoryRetainsOnlyFinalCompleteAnswersAndReplacesSameRequest() async {
+        let handle = await repo.startSession()
+        let requestID = UUID()
+        let first = InterviewHistoryAnswer(
+            id: requestID,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            question: "如何确定产品优先级？",
+            answer: InterviewReferenceAnswer(
+                segments: [
+                    .init(label: "结论", text: "先对齐目标。", sourceIDs: []),
+                    .init(label: "方法", text: "再比较用户价值与成本。", sourceIDs: []),
+                    .init(label: "验证", text: "最后定义验证指标。", sourceIDs: []),
+                ],
+                missingFacts: [],
+                estimatedSpeakingSeconds: 50
+            )
+        )
+        let replacement = InterviewHistoryAnswer(
+            id: requestID,
+            createdAt: first.createdAt,
+            question: first.question,
+            answer: InterviewReferenceAnswer(
+                segments: [
+                    .init(label: "结论", text: "这是最终校验版本。", sourceIDs: []),
+                    .init(label: "方法", text: "比较价值、成本与风险。", sourceIDs: []),
+                    .init(label: "验证", text: "用小流量实验验证。", sourceIDs: []),
+                ],
+                missingFacts: [],
+                estimatedSpeakingSeconds: 52
+            )
+        )
+
+        await repo.saveInterviewAnswer(sessionID: handle.sessionID, record: first)
+        await repo.saveInterviewAnswer(sessionID: handle.sessionID, record: replacement)
+
+        let records = await repo.loadInterviewAnswers(sessionID: handle.sessionID)
+        let sessionData = await repo.loadSessionData(sessionID: handle.sessionID)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.answer.segments.first?.text, "这是最终校验版本。")
+        XCTAssertEqual(sessionData.interviewAnswers, records)
+    }
+
     func testStartSessionPersistsInitialMeetingIdentity() async {
         let calendarEvent = makeCalendarEvent()
         let handle = await repo.startSession(

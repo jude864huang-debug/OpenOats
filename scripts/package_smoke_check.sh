@@ -9,8 +9,12 @@ INFO_PLIST="$APP_PATH/Contents/Info.plist"
 PKGINFO="$APP_PATH/Contents/PkgInfo"
 SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
 SWIFT_TRANSFORMERS_HUB_BUNDLE="$APP_PATH/Contents/Resources/swift-transformers_Hub.bundle"
+CODEX_WORKER="$APP_PATH/Contents/Resources/codex-worker.mjs"
+NODE_RUNTIME="$APP_PATH/Contents/Resources/node"
+CODEX_SDK_PACKAGE="$APP_PATH/Contents/Resources/node_modules/@openai/codex-sdk/package.json"
+CODEX_CLI_PACKAGE="$APP_PATH/Contents/Resources/node_modules/@openai/codex/package.json"
 
-SKIP_SIGN=1 SKIP_INSTALL=1 bash ./scripts/build_swift_app.sh
+REQUIRE_CODEX_WORKER=1 SKIP_SIGN=1 SKIP_INSTALL=1 bash ./scripts/build_swift_app.sh
 
 [[ -d "$APP_PATH" ]] || { echo "Missing app bundle at $APP_PATH"; exit 1; }
 [[ -x "$APP_BINARY" ]] || { echo "Missing app binary at $APP_BINARY"; exit 1; }
@@ -20,6 +24,12 @@ SKIP_SIGN=1 SKIP_INSTALL=1 bash ./scripts/build_swift_app.sh
 [[ -d "$SWIFT_TRANSFORMERS_HUB_BUNDLE" ]] || { echo "Missing swift-transformers Hub resource bundle at $SWIFT_TRANSFORMERS_HUB_BUNDLE"; exit 1; }
 [[ -f "$SWIFT_TRANSFORMERS_HUB_BUNDLE/gpt2_tokenizer_config.json" ]] || { echo "Missing GPT-2 tokenizer fallback config"; exit 1; }
 [[ -f "$SWIFT_TRANSFORMERS_HUB_BUNDLE/t5_tokenizer_config.json" ]] || { echo "Missing T5 tokenizer fallback config"; exit 1; }
+[[ -f "$CODEX_WORKER" ]] || { echo "Missing Codex worker entry point"; exit 1; }
+[[ -x "$NODE_RUNTIME" ]] || { echo "Missing bundled Node runtime"; exit 1; }
+[[ -f "$CODEX_SDK_PACKAGE" ]] || { echo "Missing bundled Codex SDK"; exit 1; }
+[[ -f "$CODEX_CLI_PACKAGE" ]] || { echo "Missing bundled Codex CLI"; exit 1; }
+
+"$NODE_RUNTIME" --version
 
 plutil -lint "$INFO_PLIST"
 

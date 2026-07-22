@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import CoreAudio
 import LaunchAtLogin
@@ -9,6 +10,7 @@ import Sparkle
 
 private enum SettingsTab: String, CaseIterable {
     case general
+    case copilot
     case calendar
     case transcription
     case intelligence
@@ -30,6 +32,10 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gear") }
                 .tag(SettingsTab.general)
 
+            CopilotSettingsTab(settings: settings)
+                .tabItem { Label("Copilot", systemImage: "headset") }
+                .tag(SettingsTab.copilot)
+
             CalendarSettingsTab(settings: settings)
                 .tabItem { Label("Calendar", systemImage: "calendar") }
                 .tag(SettingsTab.calendar)
@@ -38,24 +44,600 @@ struct SettingsView: View {
                 .tabItem { Label("Transcription", systemImage: "waveform") }
                 .tag(SettingsTab.transcription)
 
-            IntelligenceSettingsTab(settings: settings)
-                .tabItem { Label("Intelligence", systemImage: "brain") }
-                .tag(SettingsTab.intelligence)
-
-            SidecastSettingsTab(settings: settings)
-                .tabItem { Label("Sidecast", systemImage: "person.3.sequence") }
-                .tag(SettingsTab.sidecast)
-
             TemplatesSettingsTab(settings: settings)
                 .tabItem { Label("Templates", systemImage: "doc.text") }
                 .tag(SettingsTab.templates)
 
-            IntegrationsSettingsTab(settings: settings)
-                .tabItem { Label("Integrations", systemImage: "arrow.triangle.branch") }
-                .tag(SettingsTab.integrations)
         }
         .accessibilityIdentifier("settings.tabView")
         .frame(width: 640, height: 700)
+    }
+}
+
+// MARK: - Interview Copilot
+
+private struct CopilotSettingsTab: View {
+    @Bindable var settings: AppSettings
+    @Environment(AppCoordinator.self) private var coordinator
+    @State private var confirmDeleteSession = false
+    @State private var confirmDeleteAll = false
+    @State private var openAIValidation: APIKeyValidator.ValidationResult?
+    @State private var validatingOpenAI = false
+    @State private var microphonePermission = AVCaptureDevice.authorizationStatus(for: .audio)
+    @State private var tencentConnectionMessage: String?
+    @State private var tencentConnectionSucceeded = false
+    @State private var testingTencentConnection = false
+    @State private var resolvingTencentAppID = false
+    @State private var audioTestTask: Task<Void, Never>?
+    @State private var audioTestMessage: String?
+    @State private var showQwenAdvanced = false
+
+    private var engine: CustomerCopilotEngine? { coordinator.customerCopilotEngine }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            Form {
+            Section("面试材料") {
+                HStack {
+                    Text(settings.kbFolderPath.isEmpty ? "No folder selected" : settings.kbFolderPath)
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("选择…", action: chooseKnowledgeFolder)
+                    Button("重新编译") {
+                        guard let folder = settings.kbFolderURL else { return }
+                        Task { await engine?.compiler.compile(folderURL: folder) }
+                    }
+                    .disabled(settings.kbFolderURL == nil)
+                }
+
+                if let compiler = engine?.compiler {
+                    LabeledContent("状态", value: compiler.status.label)
+                    if let package = compiler.snapshot {
+                        LabeledContent("文件", value: "\(package.sources.count)")
+                        LabeledContent("字符", value: package.characterCount.formatted())
+                        LabeledContent("估算 tokens", value: package.estimatedTokenCount.formatted())
+                        if let brief = compiler.realtimeBrief {
+                            LabeledContent("Realtime 简报", value: "约 \(brief.estimatedTokenCount.formatted()) tokens")
+                            LabeledContent("简报来源块", value: brief.includedBlockIDs.count.formatted())
+                        }
+                        LabeledContent("更新时间", value: package.compiledAt.formatted(date: .abbreviated, time: .standard))
+                        ForEach(KnowledgeSourceCategory.allCases, id: \.rawValue) { category in
+                            if let count = package.categoryCounts[category], count > 0 {
+                                LabeledContent(category.label, value: "\(count)")
+                            }
+                        }
+                        if !package.classificationWarnings.isEmpty {
+                            Text(package.classificationWarnings.joined(separator: "\n"))
+                                .font(.system(size: 10)).foregroundStyle(.orange).textSelection(.enabled)
+                        }
+                    }
+                    if !compiler.failedFiles.isEmpty {
+                        Text(compiler.failedFiles.joined(separator: "\n"))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                }
+                Text("推荐结构：01-resume、02-story-bank、03-job-description、04-company、05-domain。未分类文件不能作为个人经历依据。")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+
+            Section("面试 ASR") {
+                Picker("音频模式", selection: $settings.interviewAudioMode) {
+                    Text("腾讯流式 ASR（手动分轮）")
+                        .tag(InterviewAudioMode.manualStreamingASR)
+                    Text("GPT Realtime（实验）")
+                        .tag(InterviewAudioMode.openAIRealtimeExperimental)
+                }
+                .disabled(coordinator.transcriptionEngine?.isRunning == true)
+                .onChange(of: settings.interviewAudioMode) { _, _ in
+                    engine?.reconfigureInterviewAudioMode()
+                }
+
+                if coordinator.transcriptionEngine?.isRunning == true {
+                    Text("面试进行中不能切换音频模式；请先停止本场面试。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+
+                if settings.interviewAudioMode == .manualStreamingASR {
+                    LabeledContent("主识别服务", value: "腾讯云 · 16k_zh（标准版）")
+                    Text("默认使用腾讯云标准实时语音识别，可抵扣账户每月实时 ASR 免费额度；具体剩余额度以腾讯云控制台为准。英文术语主要通过下方热词增强。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack {
+                        TextField("腾讯云 AppID", text: $settings.tencentASRAppID)
+                        Button(resolvingTencentAppID ? "正在获取…" : "自动获取") {
+                            Task { await resolveTencentAppID(force: true) }
+                        }
+                        .disabled(resolvingTencentAppID || !hasTencentSecretPair)
+                    }
+                    SecureField("SecretID（保存在 Keychain）", text: $settings.tencentASRSecretID)
+                    SecureField("SecretKey（保存在 Keychain）", text: $settings.tencentASRSecretKey)
+
+                    HStack {
+                        Button(testingTencentConnection ? "正在测试…" : "测试连接") {
+                            testTencentConnection()
+                        }
+                        .disabled(testingTencentConnection || !settings.hasTencentASRCredentials)
+                        if testingTencentConnection { ProgressView().controlSize(.small) }
+                        if let tencentConnectionMessage {
+                            Label(
+                                tencentConnectionMessage,
+                                systemImage: tencentConnectionSucceeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                            )
+                            .font(.system(size: 10))
+                            .foregroundStyle(tencentConnectionSucceeded ? Color.green : Color.orange)
+                        }
+                    }
+
+                    Toggle("根据面试材料自动生成热词", isOn: $settings.interviewASRAutoHotwordsEnabled)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("手动热词（逗号或换行分隔，优先级最高）")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $settings.interviewASRHotwordOverrides)
+                            .font(.system(size: 11))
+                            .frame(minHeight: 58, maxHeight: 82)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color.primary.opacity(0.12))
+                            }
+                        Text(hotwordPreviewText)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .textSelection(.enabled)
+                    }
+
+                    LabeledContent("本地故障兜底") {
+                        Label(
+                            settings.qwenASRRuntimeStatus.message,
+                            systemImage: settings.isQwenASRFallbackAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(settings.isQwenASRFallbackAvailable ? Color.green : Color.orange)
+                    }
+                    if let engine {
+                        LabeledContent("本场预热状态", value: engine.qwenFallbackPrewarmStatus)
+                            .foregroundStyle(
+                                engine.qwenFallbackPrewarmStatus.hasPrefix("预热失败")
+                                    ? Color.orange
+                                    : Color.secondary
+                            )
+                    }
+
+                    DisclosureGroup("Qwen 高级路径", isExpanded: $showQwenAdvanced) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField("mlx-qwen3-asr 可执行文件（留空自动发现）", text: $settings.qwenASRExecutablePath)
+                            TextField("Qwen3-ASR-0.6B 模型目录（留空自动发现）", text: $settings.qwenASRModelPath)
+                            LabeledContent("已发现程序", value: settings.resolvedQwenASRExecutableURL?.path ?? "未发现")
+                            LabeledContent("已发现模型", value: settings.resolvedQwenASRModelURL?.path ?? "未发现")
+                        }
+                        .font(.system(size: 10))
+                        .padding(.top, 6)
+                    }
+
+                    Text("腾讯模式只发送当前活动角色的音频和热词；精简知识包只会发送给文字生成模型。腾讯云费用与 ChatGPT Pro、OpenAI API 分开。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Label("实验功能：中文识别、打断和轮次判断可能不稳定。", systemImage: "flask.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                    TextField("Realtime 模型", text: Binding(
+                        get: { engine?.realtimeModel ?? "gpt-realtime-2.1" },
+                        set: { engine?.realtimeModel = $0 }
+                    ))
+                    Text("实验模式会把双方实时音频、面试简报和会话上下文发送给 OpenAI。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("音频检查") {
+                LabeledContent("候选人麦克风", value: settings.inputDeviceName ?? "系统默认输入设备")
+                LabeledContent("面试官系统音频", value: settings.outputDeviceName ?? "系统默认输出设备")
+                LabeledContent("麦克风权限") {
+                    Text(microphonePermissionLabel)
+                        .foregroundStyle(microphonePermission == .authorized ? Color.green : Color.orange)
+                }
+                LabeledContent("屏幕录制权限") {
+                    Text(CGPreflightScreenCaptureAccess() ? "已允许" : "尚未允许或需重新启动")
+                        .foregroundStyle(CGPreflightScreenCaptureAccess() ? Color.green : Color.orange)
+                }
+                TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                    let transcription = coordinator.transcriptionEngine
+                    let health = transcription?.captureHealthSnapshot
+                    VStack(alignment: .leading, spacing: 6) {
+                        audioChannelMeter(
+                            title: "Mic / 候选人",
+                            level: transcription?.micAudioLevel ?? 0,
+                            hasFrames: health?.micHasCapturedFrames ?? false,
+                            lastFrameAt: health?.micLastFrameAt,
+                            sampleRate: health?.micSampleRate
+                        )
+                        audioChannelMeter(
+                            title: "System / 面试官",
+                            level: transcription?.systemAudioLevel ?? 0,
+                            hasFrames: health?.systemHasCapturedFrames ?? false,
+                            lastFrameAt: health?.systemLastFrameAt,
+                            sampleRate: health?.systemSampleRate
+                        )
+                        LabeledContent("采集状态", value: coordinator.transcriptionEngine?.assetStatus ?? "尚未启动")
+                        if let error = health?.micCaptureError ?? coordinator.transcriptionEngine?.lastError,
+                           !error.isEmpty {
+                            Text(error)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                HStack {
+                    if microphonePermission == .notDetermined {
+                        Button("请求麦克风权限") {
+                            Task {
+                                _ = await AVCaptureDevice.requestAccess(for: .audio)
+                                microphonePermission = AVCaptureDevice.authorizationStatus(for: .audio)
+                            }
+                        }
+                    } else if microphonePermission != .authorized {
+                        Button("打开麦克风隐私设置") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                    if !CGPreflightScreenCaptureAccess() {
+                        Button("打开屏幕录制设置") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                    Button(audioTestTask == nil ? "进行 3 秒双路测试" : "测试中…") {
+                        runAudioTest()
+                    }
+                    .disabled(audioTestTask != nil || coordinator.transcriptionEngine?.isRunning != true)
+                }
+                if let audioTestMessage {
+                    Text(audioTestMessage)
+                        .font(.system(size: 10))
+                        .foregroundStyle(audioTestMessage.contains("通过") ? Color.green : Color.orange)
+                }
+                Text("请先点击 Start，再测试两路音频。收到帧但电平过低通常是静音或音量问题；完全没有帧通常是权限、设备或采集启动问题。设备可在 Transcription → Audio Input 中切换。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("文字生成") {
+                Picker("生成通路", selection: Binding(
+                    get: { engine?.inferencePreference ?? .apiPreferred },
+                    set: { engine?.inferencePreference = $0 }
+                )) {
+                    ForEach([InterviewInferencePreference.apiPreferred, .codexOnly], id: \.rawValue) { value in
+                        Text(value.label).tag(value)
+                    }
+                }
+                .accessibilityIdentifier("settings.copilot.inferenceProviderPicker")
+                TextField("主回答模型", text: $settings.interviewMainAnswerModel)
+                    .accessibilityHint("用于生成唯一的渐进参考回答；模型名会原样传给 OpenAI API 或本机 Codex CLI")
+                Text("默认 \(SettingsStore.defaultInterviewMainAnswerModel)。同一次请求会依次提交可开口句、逻辑锚点和专业展开，不再并行展示两套答案。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("回答深度", selection: $settings.interviewAnswerDepth) {
+                    ForEach(InterviewAnswerDepth.allCases) { depth in
+                        Text(depth.label).tag(depth)
+                    }
+                }
+                Text(settings.interviewAnswerDepth.targetDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("备用回答模型", text: $settings.interviewFallbackAnswerModel)
+                    .accessibilityHint("只在 Terra 明确失败且尚未显示可用首句时启动")
+                Text("默认 \(SettingsStore.defaultInterviewFallbackAnswerModel)。只有 Terra 请求失败且尚未显示可用首句时才会切换；切换后，本次面试的后续主回答继续使用备用模型。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Toggle("将我的转写用于后续文字提示", isOn: $settings.interviewIncludeCandidateAnswersInContext)
+                    .accessibilityHint("关闭时仍转写并本地保存，但不会发送给后续文字模型")
+                Text("默认关闭。开启后，最近六轮候选人回答每轮最多发送约 500 字，当前回答最多约 800 字；转写只帮助理解追问，不能作为个人经历或数字的事实依据。腾讯云 ASR 仍会接收当前活动角色的音频。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Stepper(
+                    value: $settings.interviewKnowledgeBriefTokenBudget,
+                    in: SettingsStore.interviewKnowledgeBriefTokenRange,
+                    step: 1_000
+                ) {
+                    Label(
+                        "主回答材料：约 \(settings.interviewKnowledgeBriefTokenBudget.formatted()) tokens",
+                        systemImage: "doc.text.magnifyingglass"
+                    )
+                }
+                .accessibilityHint("调整主回答使用的精简知识包大小")
+                Text("各材料分类仍保留既定配额，分类内部会按当前问题相关度排序；可能追问使用更小的上下文。完整文件只保留在本机。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Toggle(isOn: $settings.interviewCodexFastServiceTierEnabled) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("Codex 官方 Fast mode", systemImage: "hare.fill")
+                        Label("对支持该服务层的 Codex 模型提速，但会消耗更多订阅额度；备用 Spark 使用自身的低延迟通路。", systemImage: "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityHint("控制 Codex 官方 Fast mode；开启后会增加订阅额度消耗")
+                HStack {
+                    SecureField("OpenAI API Key", text: $settings.openAIApiKey)
+                    Button(validatingOpenAI ? "验证中…" : "验证") {
+                        validatingOpenAI = true
+                        Task {
+                            openAIValidation = await APIKeyValidator.validateOpenAIKey(settings.openAIApiKey)
+                            validatingOpenAI = false
+                        }
+                    }
+                    .disabled(validatingOpenAI || settings.openAIApiKey.isEmpty)
+                }
+                if let openAIValidation {
+                    Text(validationText(openAIValidation))
+                        .font(.system(size: 10))
+                        .foregroundStyle(validationColor(openAIValidation))
+                }
+                Text("API key 只保存在 macOS Keychain。API 模式会把精简知识包、最近六轮面试官问题和当前问题发送给 OpenAI；候选人转写只有开启上方开关后才发送。费用与 ChatGPT Pro 分开，缺少 key 时使用 Codex 订阅通路。")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("正式支持通路：配置 OpenAI API Key 后，主回答优先通过 Responses API 使用 Terra。Codex 订阅与 Spark 属于实验性兼容通路，需要用户自行登录，实际可用性取决于账号权限。Terra 若在可用首句出现前失败，本次面试后续会固定使用 Spark；实际模型和切换原因可在「运行详情」查看。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("生成") {
+                Text("首版使用手动分轮，不使用 VAD 自动终点检测。按主快捷键结束当前角色的发言并立即切换到另一方。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                TextField("最大上下文 tokens", value: Binding(
+                    get: { engine?.maxContextTokens ?? 128_000 },
+                    set: { engine?.maxContextTokens = max(8_192, $0) }
+                ), format: .number)
+            }
+
+            Section("固定面试 Prompt") {
+                TextEditor(text: Binding(
+                    get: { engine?.interviewPrompt ?? CustomerCopilotEngine.defaultPrompt },
+                    set: { engine?.interviewPrompt = $0 }
+                ))
+                .font(.system(size: 11, design: .monospaced))
+                .frame(minHeight: 220)
+
+                HStack {
+                    Spacer()
+                    Button("恢复默认") { engine?.interviewPrompt = CustomerCopilotEngine.defaultPrompt }
+                }
+            }
+
+            Section("本地留存") {
+                Text("面试转写和提示长期保存在本机；原始音频只在当前轮次的内存缓冲中存在，绝不写入磁盘。删除操作不可恢复。")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                HStack {
+                    Button("删除本场面试（含转写）", role: .destructive) { confirmDeleteSession = true }
+                    Button("清空全部 Copilot 历史", role: .destructive) { confirmDeleteAll = true }
+                }
+            }
+
+                Section("全局快捷键") {
+                    LabeledContent("结束当前发言 / 切换角色") {
+                        CopilotHotkeyRecorder(shortcut: $settings.copilotTurnHotkey)
+                    }
+                    LabeledContent("合并上一段", value: CopilotTurnHotkey.merge.displayName)
+                    LabeledContent("停止生成", value: CopilotTurnHotkey.stop.displayName)
+                    LabeledContent("镜头卡开关", value: CopilotTurnHotkey.lensToggle.displayName)
+                }
+            }
+            .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(20)
+        }
+        .scrollIndicators(.visible)
+        .task {
+            await resolveTencentAppID(force: false)
+        }
+        .onDisappear {
+            audioTestTask?.cancel()
+            audioTestTask = nil
+        }
+        .confirmationDialog("删除本场面试的转写和 Copilot 历史？", isPresented: $confirmDeleteSession, titleVisibility: .visible) {
+            Button("删除", role: .destructive) { engine?.deleteCurrentSessionHistory() }
+        }
+        .confirmationDialog("清空全部 Copilot 历史？", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
+            Button("全部删除", role: .destructive) { engine?.deleteAllHistory() }
+        }
+    }
+
+    private func chooseKnowledgeFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "使用此面试材料文件夹"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        settings.kbFolderPath = url.path
+        engine?.compiler.watch(folderURL: url)
+    }
+
+    private var hotwords: [InterviewHotword] {
+        InterviewHotwordExtractor.extract(
+            manualTerms: settings.interviewASRManualTerms,
+            snapshot: settings.interviewASRAutoHotwordsEnabled ? engine?.compiler.snapshot : nil
+        )
+    }
+
+    private var hotwordPreviewText: String {
+        guard !hotwords.isEmpty else {
+            return "当前没有热词。可在上方填写专业词，或先编译面试材料。"
+        }
+        let preview = hotwords.prefix(24).map { "\($0.phrase)|\($0.weight)" }.joined(separator: "、")
+        let suffix = hotwords.count > 24 ? " …" : ""
+        return "将发送 \(hotwords.count)/128 条：\(preview)\(suffix)"
+    }
+
+    @ViewBuilder
+    private func audioChannelMeter(
+        title: String,
+        level: Float,
+        hasFrames: Bool,
+        lastFrameAt: Date?,
+        sampleRate: Double?
+    ) -> some View {
+        let state: (text: String, color: Color) = if !hasFrames {
+            ("未收到音频帧", .orange)
+        } else if level > 0.002 {
+            ("检测到声音", .green)
+        } else {
+            ("已收到帧，当前音量低", .secondary)
+        }
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(title).frame(width: 105, alignment: .leading)
+                ProgressView(value: Double(level), total: 1)
+                Text(state.text)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(state.color)
+                    .frame(width: 124, alignment: .trailing)
+            }
+            HStack(spacing: 8) {
+                if let sampleRate {
+                    Text("\(Int(sampleRate.rounded()).formatted()) Hz")
+                }
+                if let lastFrameAt {
+                    Text("最后一帧 \(lastFrameAt.formatted(date: .omitted, time: .standard))")
+                }
+            }
+            .font(.system(size: 9, design: .monospaced))
+            .foregroundStyle(.tertiary)
+            .padding(.leading, 113)
+        }
+    }
+
+    private func runAudioTest() {
+        guard audioTestTask == nil, let transcription = coordinator.transcriptionEngine, transcription.isRunning else {
+            audioTestMessage = "请先点击 Start，启动系统音频和麦克风采集。"
+            return
+        }
+        audioTestMessage = nil
+        audioTestTask = Task { @MainActor in
+            var micPeak: Float = 0
+            var systemPeak: Float = 0
+            var micFrames = false
+            var systemFrames = false
+            for _ in 0..<15 {
+                guard !Task.isCancelled else { return }
+                micPeak = max(micPeak, transcription.micAudioLevel)
+                systemPeak = max(systemPeak, transcription.systemAudioLevel)
+                let health = transcription.captureHealthSnapshot
+                micFrames = micFrames || health.micHasCapturedFrames
+                systemFrames = systemFrames || health.systemHasCapturedFrames
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+
+            let micResult = !micFrames ? "Mic 无帧" : (micPeak > 0.002 ? "Mic 通过" : "Mic 音量低")
+            let systemResult = !systemFrames ? "System 无帧" : (systemPeak > 0.002 ? "System 通过" : "System 音量低")
+            audioTestMessage = "测试完成：\(micResult)；\(systemResult)。"
+            audioTestTask = nil
+        }
+    }
+
+    private var hasTencentSecretPair: Bool {
+        !settings.tencentASRSecretID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !settings.tencentASRSecretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    @MainActor
+    private func resolveTencentAppID(force: Bool) async {
+        guard !resolvingTencentAppID, hasTencentSecretPair else { return }
+        guard force || settings.tencentASRAppID.isEmpty else { return }
+
+        resolvingTencentAppID = true
+        tencentConnectionSucceeded = false
+        tencentConnectionMessage = nil
+        do {
+            settings.tencentASRAppID = try await TencentAccountAppIDResolver.resolve(
+                secretID: settings.tencentASRSecretID,
+                secretKey: settings.tencentASRSecretKey
+            )
+            tencentConnectionSucceeded = true
+            tencentConnectionMessage = "已从腾讯云账号自动获取 APPID。"
+        } catch {
+            tencentConnectionSucceeded = false
+            tencentConnectionMessage = error.localizedDescription
+        }
+        resolvingTencentAppID = false
+    }
+
+    private func testTencentConnection() {
+        guard settings.hasTencentASRCredentials else {
+            tencentConnectionSucceeded = false
+            tencentConnectionMessage = "请完整填写 AppID、SecretID 和 SecretKey。"
+            return
+        }
+        testingTencentConnection = true
+        tencentConnectionSucceeded = false
+        tencentConnectionMessage = nil
+        let configuration = TencentASRConfiguration(
+            credentials: TencentASRCredentials(
+                appID: settings.tencentASRAppID,
+                secretID: settings.tencentASRSecretID,
+                secretKey: settings.tencentASRSecretKey
+            ),
+            hotwords: [],
+            connectionTimeout: .seconds(8)
+        )
+        Task {
+            do {
+                try await TencentASRConnectionTester.test(configuration: configuration)
+                tencentConnectionSucceeded = true
+                tencentConnectionMessage = "腾讯云连接和鉴权成功。"
+            } catch {
+                tencentConnectionSucceeded = false
+                tencentConnectionMessage = error.localizedDescription
+            }
+            testingTencentConnection = false
+        }
+    }
+
+    private var microphonePermissionLabel: String {
+        switch microphonePermission {
+        case .authorized: "已允许"
+        case .notDetermined: "尚未请求"
+        case .denied: "已拒绝"
+        case .restricted: "受系统限制"
+        @unknown default: "未知"
+        }
+    }
+
+    private func validationText(_ result: APIKeyValidator.ValidationResult) -> String {
+        switch result {
+        case .valid: "API key 可用"
+        case .invalid(let message), .networkError(let message): message
+        }
+    }
+
+    private func validationColor(_ result: APIKeyValidator.ValidationResult) -> Color {
+        switch result {
+        case .valid: .green
+        case .invalid: .red
+        case .networkError: .orange
+        }
     }
 }
 
@@ -64,6 +646,7 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @Bindable var settings: AppSettings
     var updater: SPUUpdater
+    @Environment(AppCoordinator.self) private var coordinator
     @State private var automaticallyChecksForUpdates = false
     @State private var showAutoDetectExplanation = false
     @State private var launchAtLoginEnabled = false
@@ -265,7 +848,10 @@ private struct GeneralSettingsTab: View {
                 Section("Privacy") {
                     Toggle("Hide from screen sharing", isOn: $settings.hideFromScreenShare)
                         .font(.system(size: 12))
-                    Text("When enabled, the app is invisible during screen sharing and recording.")
+                        .disabled(coordinator.transcriptionEngine?.isRunning == true)
+                    Text(coordinator.transcriptionEngine?.isRunning == true
+                        ? "Interview Copilot is always visible while an interview is running."
+                        : "For ordinary sessions only. Starting Interview Copilot resets this to visible.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -912,16 +1498,15 @@ private struct IntelligenceSettingsTab: View {
                     }
                 }
 
-                Section("Classic Suggestions") {
-                    Toggle("Floating suggestion panel", isOn: $settings.suggestionPanelEnabled)
+                Section("Interview Workspace") {
+                    Toggle("Keep the main window always on top", isOn: $settings.suggestionsAlwaysOnTop)
                         .font(.system(size: 12))
-                    Toggle("Always on top", isOn: $settings.suggestionsAlwaysOnTop)
-                        .font(.system(size: 12))
-                        .disabled(!settings.suggestionPanelEnabled)
-                    Text("Configure the original single-stream suggestion panel. The multi-persona sidebar lives in the Sidecast tab.")
+                    Text("Use the pin button in the main window header to change this at any time. Interview Copilot, transcript, and notes share the same window.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+                }
 
+                Section("Classic Suggestions") {
                     switch settings.llmProvider {
                     case .openRouter:
                         TextField("Speed Model", text: $settings.realtimeModel, prompt: Text("e.g. google/gemini-2.0-flash-001"))

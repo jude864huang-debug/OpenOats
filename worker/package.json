@@ -1,0 +1,11 @@
+{
+  "name": "realtime-copilot-codex-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test codex-worker.test.mjs"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.144.6"
+  }
+}

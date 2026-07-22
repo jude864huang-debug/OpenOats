@@ -1,4 +1,250 @@
+import AppKit
 import Foundation
+
+/// A physical-key global shortcut used to commit the active interview turn.
+/// The key code keeps the shortcut stable when the user's keyboard layout changes.
+struct CopilotTurnHotkey: Codable, Hashable, Sendable {
+    let keyCode: UInt16
+    let modifierRawValue: UInt
+    let keyLabel: String
+
+    init(keyCode: UInt16, modifierRawValue: UInt, keyLabel: String) {
+        self.keyCode = keyCode
+        self.modifierRawValue = modifierRawValue & Self.supportedModifierMask
+        self.keyLabel = keyLabel.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
+    static let defaultTurn = CopilotTurnHotkey(
+        keyCode: 5,
+        modifierRawValue: NSEvent.ModifierFlags([.control, .option]).rawValue,
+        keyLabel: "G"
+    )
+
+    static let merge = CopilotTurnHotkey(
+        keyCode: 46,
+        modifierRawValue: NSEvent.ModifierFlags([.control, .option]).rawValue,
+        keyLabel: "M"
+    )
+
+    static let stop = CopilotTurnHotkey(
+        keyCode: 1,
+        modifierRawValue: NSEvent.ModifierFlags([.control, .option]).rawValue,
+        keyLabel: "S"
+    )
+
+    /// Fixed camera-adjacent lens card visibility shortcut. Physical key code 0
+    /// is the A key and stays stable across keyboard layouts.
+    static let lensToggle = CopilotTurnHotkey(
+        keyCode: 0,
+        modifierRawValue: NSEvent.ModifierFlags.option.rawValue,
+        keyLabel: "A"
+    )
+
+    static let lensPrevious = CopilotTurnHotkey(
+        keyCode: 123,
+        modifierRawValue: 0,
+        keyLabel: "LEFT"
+    )
+
+    static let lensNext = CopilotTurnHotkey(
+        keyCode: 124,
+        modifierRawValue: 0,
+        keyLabel: "RIGHT"
+    )
+
+    static var supportedModifierMask: UInt {
+        NSEvent.ModifierFlags([.command, .control, .option, .shift]).rawValue
+    }
+
+    var modifierFlags: NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: modifierRawValue)
+            .intersection([.command, .control, .option, .shift])
+    }
+
+    var hasRequiredModifier: Bool {
+        !modifierFlags.isEmpty
+    }
+
+    var displayName: String {
+        var value = ""
+        if modifierFlags.contains(.control) { value += "⌃" }
+        if modifierFlags.contains(.option) { value += "⌥" }
+        if modifierFlags.contains(.shift) { value += "⇧" }
+        if modifierFlags.contains(.command) { value += "⌘" }
+        return value + (keyLabel.isEmpty ? "?" : keyLabel)
+    }
+
+    static func == (lhs: CopilotTurnHotkey, rhs: CopilotTurnHotkey) -> Bool {
+        lhs.keyCode == rhs.keyCode && lhs.modifierRawValue == rhs.modifierRawValue
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(keyCode)
+        hasher.combine(modifierRawValue)
+    }
+}
+
+enum CopilotTurnHotkeyValidation: Equatable, Sendable {
+    case valid
+    case invalid(String)
+    case systemConflict(String)
+
+    static func validate(_ shortcut: CopilotTurnHotkey) -> CopilotTurnHotkeyValidation {
+        if shortcut == .lensPrevious || shortcut == .lensNext {
+            return .invalid("该按键已用于镜头模式翻页。")
+        }
+        guard shortcut.hasRequiredModifier else {
+            return .invalid("快捷键必须包含 ⌃、⌥、⇧ 或 ⌘ 中的至少一个修饰键。")
+        }
+        if shortcut == .merge {
+            return .invalid("该组合已用于“合并上一段”。")
+        }
+        if shortcut == .stop {
+            return .invalid("该组合已用于“停止生成”。")
+        }
+        if shortcut == .lensToggle {
+            return .invalid("该组合已用于“镜头卡开关”。")
+        }
+
+        let flags = shortcut.modifierFlags
+        let label = shortcut.keyLabel.uppercased()
+        let conflictsWithAppShortcut =
+            (flags == [.command, .shift] && ["L", "O", "M", "I"].contains(label))
+            || (flags == [.command] && ["1", "2", "3"].contains(label))
+        if conflictsWithAppShortcut {
+            return .invalid("该组合已被 OpenOats 的现有操作使用。")
+        }
+        let commonSystemShortcut =
+            (flags == [.command] && ["Q", "W", "H", "M", "TAB", "SPACE"].contains(label))
+            || (flags == [.control] && ["SPACE", "UP", "DOWN", "LEFT", "RIGHT"].contains(label))
+            || (flags == [.command, .option] && ["ESC"].contains(label))
+        if commonSystemShortcut {
+            return .systemConflict("该组合通常由 macOS 使用。再次按下同一组合可确认覆盖。")
+        }
+        return .valid
+    }
+}
+
+enum InterviewLensPersistentSelection: String, CaseIterable, Codable, Sendable {
+    case question
+    case answer
+    // Legacy persisted values. They are migrated to `.answer` at runtime.
+    case quickIdea
+    case referenceAnswer
+    case followUps
+
+    static let defaultValue: Self = .answer
+}
+
+enum InterviewAnswerDepth: String, CaseIterable, Codable, Sendable, Identifiable {
+    case concise
+    case standard
+    case deep
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .concise: "简短"
+        case .standard: "标准"
+        case .deep: "深入"
+        }
+    }
+
+    var targetDescription: String {
+        switch self {
+        case .concise: "20–40 秒 · 通常 2 个锚点"
+        case .standard: "30–75 秒 · 通常 3 个锚点"
+        case .deep: "60–90 秒 · 3–4 个锚点"
+        }
+    }
+
+    var reasoningEffort: InterviewReasoningEffort {
+        self == .deep ? .medium : .low
+    }
+
+    /// Includes both model reasoning and the strict JSON envelope. The previous
+    /// fixed 1,100-token ceiling could truncate an otherwise valid final answer.
+    var progressiveAnswerOutputTokenBudget: Int {
+        switch self {
+        case .concise: 1_200
+        case .standard: 1_800
+        case .deep: 2_400
+        }
+    }
+}
+
+enum InterviewLensFontScale: Int, CaseIterable, Codable, Sendable {
+    case percent100 = 100
+    case percent115 = 115
+    case percent130 = 130
+    case percent150 = 150
+    case percent175 = 175
+    case percent200 = 200
+
+    static let defaultValue: Self = .percent115
+
+    var multiplier: Double {
+        Double(rawValue) / 100
+    }
+}
+
+struct InterviewLensSize: Codable, Equatable, Sendable {
+    static let widthRange: ClosedRange<Double> = 440 ... 680
+    static let heightRange: ClosedRange<Double> = 220 ... 320
+    static let defaultValue = InterviewLensSize(width: 560, height: 288)
+
+    let width: Double
+    let height: Double
+
+    init(width: Double, height: Double) {
+        self.width = Self.clamp(width, to: Self.widthRange, fallback: 560)
+        self.height = Self.clamp(height, to: Self.heightRange, fallback: 288)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            width: try container.decode(Double.self, forKey: .width),
+            height: try container.decode(Double.self, forKey: .height)
+        )
+    }
+
+    private static func clamp(
+        _ value: Double,
+        to range: ClosedRange<Double>,
+        fallback: Double
+    ) -> Double {
+        guard value.isFinite else { return fallback }
+        return min(max(value, range.lowerBound), range.upperBound)
+    }
+}
+
+struct InterviewLensDisplayPlacement: Codable, Equatable, Sendable {
+    let normalizedX: Double
+    let normalizedY: Double
+    let size: InterviewLensSize?
+
+    init(normalizedX: Double, normalizedY: Double, size: InterviewLensSize? = nil) {
+        self.normalizedX = Self.normalizedCoordinate(normalizedX)
+        self.normalizedY = Self.normalizedCoordinate(normalizedY)
+        self.size = size
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            normalizedX: try container.decode(Double.self, forKey: .normalizedX),
+            normalizedY: try container.decode(Double.self, forKey: .normalizedY),
+            size: try container.decodeIfPresent(InterviewLensSize.self, forKey: .size)
+        )
+    }
+
+    private static func normalizedCoordinate(_ value: Double) -> Double {
+        guard value.isFinite else { return 0.5 }
+        return min(max(value, 0), 1)
+    }
+}
 
 enum MeetingTranscriptDateFolderFormat: String, CaseIterable, Identifiable, Codable, Sendable {
     case us

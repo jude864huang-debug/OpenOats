@@ -45,6 +45,8 @@ final class AppContainer {
 
         switch mode {
         case .live:
+            // Interview Copilot persists text only. Never retain raw meeting audio.
+            UserDefaults.standard.set(false, forKey: "saveAudioRecording")
             let container = AppContainer(
                 mode: .live,
                 defaults: .standard,
@@ -100,6 +102,11 @@ final class AppContainer {
                 runMigrations: false
             )
             let settings = AppSettings(storage: storage)
+            if scenario == .interviewLensSmoke {
+                settings.tencentASRAppID = "ui-test-app"
+                settings.tencentASRSecretID = "ui-test-secret-id"
+                settings.tencentASRSecretKey = "ui-test-secret-key"
+            }
             let notesEngine = NotesEngine(mode: .scripted(markdown: scriptedNotesMarkdown))
             let coordinator = AppCoordinator(
                 sessionRepository: SessionRepository(rootDirectory: appSupportDirectory),
@@ -138,11 +145,33 @@ final class AppContainer {
             knowledgeBase: knowledgeBase,
             settings: settings
         )
+        let compiler = KnowledgePackageCompiler(stateDirectory: appSupportDirectory)
+        let historyStore = CopilotHistoryStore(
+            databaseURL: appSupportDirectory
+                .appendingPathComponent("copilot", isDirectory: true)
+                .appendingPathComponent("history.sqlite")
+        )
+        let sessionRepository = coordinator.sessionRepository
+        let customerCopilotEngine = CustomerCopilotEngine(
+            transcriptStore: coordinator.transcriptStore,
+            compiler: compiler,
+            worker: CodexWorkerClient(),
+            historyStore: historyStore,
+            settings: settings,
+            sessionDeleteHandler: { sessionID in
+                await sessionRepository.deleteSession(sessionID: sessionID)
+            },
+            interviewAnswerSaveHandler: { sessionID, record in
+                await sessionRepository.saveInterviewAnswer(sessionID: sessionID, record: record)
+            },
+            defaults: defaults
+        )
 
         return AppViewServices(
             knowledgeBase: knowledgeBase,
             suggestionEngine: suggestionEngine,
-            sidecastEngine: sidecastEngine
+            sidecastEngine: sidecastEngine,
+            customerCopilotEngine: customerCopilotEngine
         )
     }
 
@@ -154,11 +183,13 @@ final class AppContainer {
                 transcriptStore: coordinator.transcriptStore,
                 settings: settings
             )
-        case .uiTest:
+        case .uiTest(let scenario):
             transcriptionEngine = TranscriptionEngine(
                 transcriptStore: coordinator.transcriptStore,
                 settings: settings,
-                mode: .scripted(Self.scriptedUtterances)
+                mode: .scripted(
+                    scenario == .interviewLensSmoke ? [] : Self.scriptedUtterances
+                )
             )
         }
 
@@ -174,39 +205,46 @@ final class AppContainer {
     }
 
     func ensureViewServicesInitialized(settings: AppSettings, coordinator: AppCoordinator) {
-        if coordinator.knowledgeBase != nil {
+        if coordinator.knowledgeBase != nil,
+           coordinator.suggestionEngine != nil,
+           coordinator.sidecastEngine != nil,
+           coordinator.customerCopilotEngine != nil {
             didInitializeViewServices = true
             return
         }
-        guard !didInitializeViewServices else { return }
-        didInitializeViewServices = true
 
         let services = makeViewServices(settings: settings, coordinator: coordinator)
         coordinator.setViewServices(
             knowledgeBase: services.knowledgeBase,
             suggestionEngine: services.suggestionEngine,
-            sidecastEngine: services.sidecastEngine
+            sidecastEngine: services.sidecastEngine,
+            customerCopilotEngine: services.customerCopilotEngine
         )
+        didInitializeViewServices = true
     }
 
     func ensureRecordingServicesInitialized(settings: AppSettings, coordinator: AppCoordinator) {
-        if coordinator.transcriptionEngine != nil {
+        if let transcriptionEngine = coordinator.transcriptionEngine {
             didInitializeRecordingServices = true
+            coordinator.customerCopilotEngine?.attachRealtimeAudio(to: transcriptionEngine)
             return
         }
-        guard !didInitializeRecordingServices else { return }
-        didInitializeRecordingServices = true
 
         let services = makeRecordingServices(settings: settings, coordinator: coordinator)
         coordinator.transcriptionEngine = services.transcriptionEngine
         coordinator.liveTranscriptCleaner = services.liveTranscriptCleaner
         coordinator.audioRecorder = services.audioRecorder
         coordinator.batchAudioTranscriber = services.batchAudioTranscriber
+        coordinator.customerCopilotEngine?.attachRealtimeAudio(to: services.transcriptionEngine)
+        didInitializeRecordingServices = true
     }
 
     func ensureMeetingServicesInitialized(settings: AppSettings, coordinator: AppCoordinator) {
         ensureViewServicesInitialized(settings: settings, coordinator: coordinator)
         ensureRecordingServicesInitialized(settings: settings, coordinator: coordinator)
+        if let transcriptionEngine = coordinator.transcriptionEngine {
+            coordinator.customerCopilotEngine?.attachRealtimeAudio(to: transcriptionEngine)
+        }
     }
 
     /// Create and start the detection controller, wire the coordinator event loop.
