@@ -58,9 +58,18 @@ final class TranscriptStore {
     }
 
     @discardableResult
-    func append(_ utterance: Utterance) -> Bool {
-        guard !shouldSuppressAcousticEcho(utterance) else { return false }
-        utterances.append(utterance)
+    func append(
+        _ utterance: Utterance,
+        suppressAcousticEcho: Bool = true,
+        preserveChronologicalOrder: Bool = false
+    ) -> Bool {
+        guard !suppressAcousticEcho || !shouldSuppressAcousticEcho(utterance) else { return false }
+        if preserveChronologicalOrder,
+           let insertionIndex = utterances.firstIndex(where: { $0.timestamp > utterance.timestamp }) {
+            utterances.insert(utterance, at: insertionIndex)
+        } else {
+            utterances.append(utterance)
+        }
 
         pruneTimestamps()
         recentUtteranceTimestamps.append(utterance.timestamp)

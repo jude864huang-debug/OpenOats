@@ -24,7 +24,12 @@ let package = Package(
         // Pin exactly so SwiftPM and Xcode smoke builds resolve the same SDK.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.13.5"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
+        // Newer WhisperKit releases reference macOS 26 SDK-only Core ML cases
+        // when compiled by Swift 6.2+, so keep the last macOS 15-compatible release.
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", exact: "0.15.0"),
+        // This is a transitive dependency of swift-transformers/Jinja. Version
+        // 1.3 adds Swift Span overloads that are unavailable in the local SDK.
+        .package(url: "https://github.com/apple/swift-collections.git", exact: "1.2.1"),
         .package(url: "https://github.com/sindresorhus/LaunchAtLogin-Modern", from: "1.1.0"),
     ],
     targets: [

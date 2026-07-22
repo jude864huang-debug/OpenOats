@@ -22,6 +22,9 @@ final class LiveSessionState {
     var isRunning: Bool = false
     var sessionPhase: MeetingState = .idle
     var audioLevel: Float = 0
+    var micAudioLevel: Float = 0
+    var systemAudioLevel: Float = 0
+    var micHasCapturedFrames: Bool = false
     var recordingElapsedSeconds: Int = 0
     var liveTranscript: [Utterance] = []
     var liveTranscriptNotice: String? = nil
@@ -186,7 +189,7 @@ final class LiveSessionController {
     private var pendingInitialScratchpad: String?
 
     // Tracked-change sentinels
-    private var observedUtteranceCount = 0
+    private var observedUtteranceIDs: Set<UUID> = []
     private var observedIsRunning = false
     private var observedAudioLevel: Float = 0
     private var observedSuggestions: [Suggestion] = []
@@ -345,10 +348,55 @@ final class LiveSessionController {
         calendarEventOverride: CalendarEvent? = nil,
         initialScratchpad: String? = nil
     ) {
-        guard !state.isRunning, startPreflightTask == nil else { return }
+        guard !state.isRunning,
+              startPreflightTask == nil,
+              coordinator.transcriptionEngine?.isRunning != true else { return }
+        // Interview Copilot intentionally persists text only.
+        settings.saveAudioRecording = false
+        settings.hideFromScreenShare = false
+        settings.applyScreenShareVisibility()
         container.ensureMeetingServicesInitialized(settings: settings, coordinator: coordinator)
+        // Pause belongs to one interview only. The transcription engine is
+        // intentionally reused across sessions, so clear its old session state
+        // before any preflight or new session transition.
+        coordinator.transcriptionEngine?.isRecordingPaused = false
+        set(\.isRecordingPaused, false)
         coordinator.suggestionEngine?.clear()
         coordinator.sidecastEngine?.clear()
+        coordinator.customerCopilotEngine?.clear()
+        coordinator.customerCopilotEngine?.reconfigureInterviewAudioMode()
+        let usesDedicatedInterviewAudio = coordinator.customerCopilotEngine != nil
+
+        if settings.interviewAudioMode == .manualStreamingASR,
+           !settings.hasTencentASRCredentials {
+            state.errorMessage = "请先在设置 → Copilot → 面试 ASR 中填写腾讯云 AppID、SecretID 和 SecretKey。"
+            state.statusMessage = "Tencent ASR setup required"
+            return
+        }
+
+        // Do not create a recording session before a local ASR model exists.
+        // Previously TranscriptionEngine returned early while the coordinator
+        // still entered its recording lifecycle, which ended as the misleading
+        // `noAudioDetected` issue even though microphone capture never started.
+        if settings.interviewAudioMode == .openAIRealtimeExperimental,
+           settings.openAIApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state.errorMessage = "GPT Realtime 实验模式需要 OpenAI API key。"
+            state.statusMessage = "OpenAI API setup required"
+            return
+        }
+
+        if !usesDedicatedInterviewAudio,
+           !settings.transcriptionModel.isCloud,
+           let engine = coordinator.transcriptionEngine {
+            engine.refreshModelAvailability()
+            syncProjectedState(settings: settings)
+            if engine.needsModelDownload {
+                state.errorMessage = "\(settings.transcriptionModel.displayName) 尚未下载。请先点击下方“Download Now”，模型就绪后再点击 Start。"
+                state.statusMessage = "Transcription model required"
+                return
+            }
+        }
+
         let calEvent = calendarEventOverride ?? (settings.calendarIntegrationEnabled
             ? container.calendarManager?.currentEvent(
                 excludingCalendarIDs: settings.excludedCalendarIDs
@@ -361,7 +409,7 @@ final class LiveSessionController {
         pendingInitialScratchpad = initialScratchpad?.trimmingCharacters(in: .newlines)
         let metadata = MeetingMetadata.manual(calendarEvent: calEvent)
 
-        if settings.transcriptionModel.isCloud {
+        if !usesDedicatedInterviewAudio && settings.transcriptionModel.isCloud {
             state.errorMessage = nil
             state.statusMessage = "Validating \(settings.transcriptionModel.displayName)..."
             startPreflightTask = Task { @MainActor [weak self] in
@@ -410,6 +458,7 @@ final class LiveSessionController {
     func toggleRecordingPause() {
         guard let engine = coordinator.transcriptionEngine, engine.isRunning else { return }
         engine.isRecordingPaused.toggle()
+        set(\.isRecordingPaused, engine.isRecordingPaused)
         observedSilenceTracking.lastAudibleActivityAt = Date()
     }
 
@@ -491,19 +540,11 @@ final class LiveSessionController {
     // MARK: - KB Indexing
 
     func indexKBIfNeeded(settings: AppSettings) {
-        guard let url = settings.kbFolderURL, let kb = coordinator.knowledgeBase else { return }
-        Task {
-            // TODO: Coalesce repeated startup/settings-triggered reindex requests into a
-            // single in-flight task. Today ContentView startup, kbFolderPath changes, and
-            // Voyage key changes can all arrive close together and redo the same cold-start scan.
-            kb.clear()
-            await kb.index(folderURL: url)
-        }
+        coordinator.customerCopilotEngine?.compiler.watch(folderURL: settings.kbFolderURL)
     }
 
     func loadKBCacheIfAvailable(settings: AppSettings) {
-        guard let url = settings.kbFolderURL, let kb = coordinator.knowledgeBase else { return }
-        _ = kb.loadCachedStateIfAvailable(folderURL: url)
+        coordinator.customerCopilotEngine?.compiler.watch(folderURL: settings.kbFolderURL)
     }
 
     // MARK: - External Commands
@@ -553,14 +594,11 @@ final class LiveSessionController {
 
         let sessionID = currentSessionID
 
-        // Echoed speaker audio can briefly land as "You"; do not let it drive the sidebar.
+        // Interview Copilot receives both finalized channels: system audio builds the
+        // interviewer prompt and mic speech freezes the active cue. Obvious echo has
+        // already been removed by TranscriptStore.
         if !coordinator.transcriptStore.shouldSkipRealtimeAssistant(for: last) {
-            switch settings.sidebarMode {
-            case .classicSuggestions:
-                coordinator.suggestionEngine?.onUtterance(last)
-            case .sidecast:
-                coordinator.sidecastEngine?.onUtterance(last)
-            }
+            coordinator.customerCopilotEngine?.onUtterance(last)
         }
 
         Task {
@@ -630,11 +668,17 @@ final class LiveSessionController {
         return bitmapRepresentation.representation(using: .png, properties: [:])
     }
 
-    private func handleNewUtterances(startingAt startIndex: Int, settings: AppSettings) {
+    private func handleNewUtterances(settings: AppSettings) {
         let utterances = coordinator.transcriptStore.utterances
-        guard startIndex < utterances.count else { return }
-
-        for utterance in utterances[startIndex...] {
+        if utterances.isEmpty {
+            observedUtteranceIDs.removeAll(keepingCapacity: true)
+            return
+        }
+        let currentIDs = Set(utterances.map(\.id))
+        if !observedUtteranceIDs.isSubset(of: currentIDs) {
+            observedUtteranceIDs.formIntersection(currentIDs)
+        }
+        for utterance in utterances where observedUtteranceIDs.insert(utterance.id).inserted {
             handleNewUtterance(utterance, settings: settings)
         }
     }
@@ -706,6 +750,7 @@ final class LiveSessionController {
             reusedAbandonedRow = false
         }
         _currentSessionID = handle.sessionID
+        coordinator.customerCopilotEngine?.setSessionID(handle.sessionID)
         DiagnosticsSupport.record(
             category: "meeting",
             message: "\(reusedAbandonedRow ? "Reused" : "Started") session \(handle.sessionID) model=\(settings?.transcriptionModel.rawValue ?? "unknown")"
@@ -732,6 +777,12 @@ final class LiveSessionController {
                 transcriptionModel: settings.transcriptionModel,
                 sessionID: handle.sessionID
             )
+            if coordinator.transcriptionEngine?.isRunning == true {
+                coordinator.customerCopilotEngine?.beginInterviewAudioSession()
+            }
+            if case .uiTest(.interviewLensSmoke) = container.mode {
+                coordinator.customerCopilotEngine?.seedInterviewLensSmokeFixture()
+            }
 
             // Silence-based auto-stop (manual and auto-detected) is handled by the
             // adaptive audio-level evaluation in the polling loop; see
@@ -752,6 +803,7 @@ final class LiveSessionController {
 
         // 1. Drain audio buffers
         await coordinator.transcriptionEngine?.finalize()
+        coordinator.customerCopilotEngine?.endInterviewAudioSession()
 
         // 1b. Drain pending cleanups
         if let settings, settings.enableLiveTranscriptCleanup {
@@ -1415,6 +1467,7 @@ final class LiveSessionController {
 
     func discardSession() {
         coordinator.transcriptionEngine?.stop()
+        coordinator.customerCopilotEngine?.endInterviewAudioSession()
         coordinator.audioRecorder?.discardRecording()
         coordinator.transcriptStore.clear()
         coordinator.pendingRecoverySessionID = nil
@@ -1496,7 +1549,19 @@ final class LiveSessionController {
         // when the value actually changed, preventing spurious layout passes on NSHostingView.
         set(\.isRunning, isRunning)
         set(\.sessionPhase, lifecycleState)
-        set(\.audioLevel, engineIsRunning ? (coordinator.transcriptionEngine?.audioLevel ?? 0) : 0)
+        let sampledAudioLevel = engineIsRunning ? (coordinator.transcriptionEngine?.audioLevel ?? 0) : 0
+        let sampledMicAudioLevel = engineIsRunning ? (coordinator.transcriptionEngine?.micAudioLevel ?? 0) : 0
+        let sampledSystemAudioLevel = engineIsRunning ? (coordinator.transcriptionEngine?.systemAudioLevel ?? 0) : 0
+        let displayedMeterLevels: (mic: Float, system: Float)
+        if case .uiTest(.interviewLensSmoke) = container.mode {
+            displayedMeterLevels = (0.42, 0.58)
+        } else {
+            displayedMeterLevels = (sampledMicAudioLevel, sampledSystemAudioLevel)
+        }
+        set(\.audioLevel, sampledAudioLevel)
+        set(\.micAudioLevel, displayedMeterLevels.mic)
+        set(\.systemAudioLevel, displayedMeterLevels.system)
+        set(\.micHasCapturedFrames, engineIsRunning ? (coordinator.transcriptionEngine?.captureHealthSnapshot.micHasCapturedFrames ?? false) : false)
         set(\.recordingElapsedSeconds, isRunning ? Self.recordingElapsedSeconds(for: lifecycleState) : 0)
         set(\.volatileYouText, coordinator.transcriptStore.volatileYouText)
         set(\.volatileThemText, coordinator.transcriptStore.volatileThemText)
@@ -1646,10 +1711,7 @@ final class LiveSessionController {
         }
 
         let utteranceCount = currentState.liveTranscript.count
-        if utteranceCount > observedUtteranceCount {
-            handleNewUtterances(startingAt: observedUtteranceCount, settings: settings)
-        }
-        observedUtteranceCount = utteranceCount
+        handleNewUtterances(settings: settings)
 
         if currentState.isRunning {
             observedPeakAudioLevelSinceStart = max(observedPeakAudioLevelSinceStart, currentState.audioLevel)

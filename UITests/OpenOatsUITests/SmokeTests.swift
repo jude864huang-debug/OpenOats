@@ -52,14 +52,119 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "app.sessionEndedBanner").waitForExistence(timeout: 5))
     }
 
-    func testSessionSmokeShowsScratchpadEditorByDefault() {
+    func testSessionSmokeCanSwitchToScratchpadWithoutLosingWorkspace() {
         let app = launchApp(scenario: "sessionSmoke")
 
         let toggle = element(in: app, identifier: "app.controlBar.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
         app.typeKey("l", modifierFlags: [.command, .shift])
+        let scratchpadTab = element(in: app, identifier: "app.interviewContext.scratchpadTab")
+        XCTAssertTrue(scratchpadTab.waitForExistence(timeout: 5))
+        scratchpadTab.click()
         XCTAssertTrue(element(in: app, identifier: "app.scratchpadEditor").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, identifier: "copilot.actionBar").exists)
+    }
+
+    func testInterviewLensSmokeUsesOnePanelAndKeepsMainBlocksStable() {
+        let app = launchApp(scenario: "interviewLensSmoke")
+        app.typeKey("l", modifierFlags: [.command, .shift])
+
+        let answer = element(in: app, identifier: "copilot.interviewLens.answer")
+        let followUps = element(in: app, identifier: "copilot.interviewLens.followUps")
+        XCTAssertTrue(answer.waitForExistence(timeout: 8))
+        XCTAssertTrue(followUps.waitForExistence(timeout: 5))
+        XCTAssertFalse(element(in: app, identifier: "copilot.interviewLens.question").exists)
+        XCTAssertTrue(element(in: app, identifier: "copilot.interviewLens.header").waitForExistence(timeout: 5))
+        let micMeter = element(in: app, identifier: "copilot.audio.micMeter")
+        let systemMeter = element(in: app, identifier: "copilot.audio.systemMeter")
+        XCTAssertTrue(micMeter.waitForExistence(timeout: 5))
+        XCTAssertTrue(systemMeter.waitForExistence(timeout: 5))
+        XCTAssertTrue(hasAudibleMeterValue(micMeter))
+        XCTAssertTrue(hasAudibleMeterValue(systemMeter))
+        XCTAssertTrue(element(in: app, identifier: "copilot.runDiagnostics.button").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, identifier: "app.interviewContext.transcriptTab").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, identifier: "app.interviewContext.scratchpadTab").waitForExistence(timeout: 5))
+        let mainWindow = app.windows["main"]
+        let commitTurn = element(in: app, identifier: "copilot.turn.commit")
+        let transcriptScrollView = element(in: app, identifier: "transcript.scrollView")
+        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5))
+        XCTAssertTrue(commitTurn.waitForExistence(timeout: 5))
+        XCTAssertTrue(transcriptScrollView.waitForExistence(timeout: 5))
+        XCTAssertTrue(mainWindow.frame.contains(commitTurn.frame))
+        XCTAssertTrue(mainWindow.frame.contains(transcriptScrollView.frame))
+        XCTAssertTrue(element(in: app, identifier: "copilot.audio.pauseToggle").exists)
+        XCTAssertFalse(element(in: app, identifier: "copilot.audio.muteToggle").exists)
+        XCTAssertFalse(element(in: app, identifier: "copilot.generation.stop").exists)
+        for number in 1...3 {
+            XCTAssertTrue(
+                element(in: app, identifier: "copilot.followUp.question.\(number)")
+                    .waitForExistence(timeout: 5)
+            )
+            XCTAssertTrue(
+                element(in: app, identifier: "copilot.followUp.answer.\(number)")
+                    .waitForExistence(timeout: 5)
+            )
+        }
+
+        let originalAnswerFrame = answer.frame
+        answer.click()
+
+        let panel = element(in: app, identifier: "copilot.interviewLens.panel")
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertEqual(
+            app.descendants(matching: .any)
+                .matching(identifier: "copilot.interviewLens.panel")
+                .count,
+            1
+        )
+        XCTAssertEqual(answer.frame, originalAnswerFrame)
+
+        let fontScale = element(in: app, identifier: "copilot.interviewLens.fontScale")
+        let originalFontScale = fontScale.label
+        element(in: app, identifier: "copilot.interviewLens.fontIncrease").click()
+        XCTAssertNotEqual(fontScale.label, originalFontScale)
+
+        let originalPanelFrame = panel.frame
+        let title = element(in: app, identifier: "copilot.interviewLens.title")
+        XCTAssertTrue(title.label.contains("参考回答"))
+
+        followUps.click()
+        XCTAssertTrue(title.label.contains("可能追问"))
+        XCTAssertEqual(
+            app.descendants(matching: .any)
+                .matching(identifier: "copilot.interviewLens.panel")
+                .count,
+            1
+        )
+        XCTAssertEqual(panel.frame.maxY, originalPanelFrame.maxY, accuracy: 2)
+
+        // Repeated semantic-card switches used to synchronously resize the
+        // panel inside SwiftUI's display cycle and crash AppKit.
+        for _ in 0..<6 {
+            answer.click()
+            followUps.click()
+        }
+        XCTAssertTrue(panel.exists)
+
+        let pageCounter = element(in: app, identifier: "copilot.interviewLens.pageCounter")
+        let firstFollowUpPage = pageCounter.label
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.control, .option])
+        XCTAssertTrue(title.label.contains("可能追问"))
+        XCTAssertNotEqual(pageCounter.label, firstFollowUpPage)
+
+        element(in: app, identifier: "copilot.interviewLens.close").click()
+        XCTAssertFalse(panel.waitForExistence(timeout: 2))
+
+        answer.click()
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(
+            element(in: app, identifier: "copilot.interviewLens.fontScale").label,
+            originalFontScale
+        )
+        element(in: app, identifier: "copilot.interviewLens.close").click()
+        XCTAssertFalse(panel.waitForExistence(timeout: 2))
+        XCTAssertTrue(element(in: app, identifier: "copilot.interviewLens.header").exists)
     }
 
     func testSessionSmokeRoutesGenerateNotesIntoMainWindowDetail() {
@@ -178,6 +283,27 @@ final class SmokeTests: XCTestCase {
 
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    private func elements(
+        in app: XCUIApplication,
+        identifierPrefix: String
+    ) -> XCUIElementQuery {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", identifierPrefix)
+        )
+    }
+
+    private func hasAudibleMeterValue(_ element: XCUIElement) -> Bool {
+        if let number = element.value as? NSNumber {
+            return number.doubleValue > 0
+        }
+        guard let text = element.value as? String else { return false }
+        if text == "检测到声音" { return true }
+        let normalized = text
+            .replacingOccurrences(of: "%", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (Double(normalized) ?? 0) > 0
     }
 
     private func focus(window: XCUIElement) {

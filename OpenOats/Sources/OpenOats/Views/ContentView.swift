@@ -13,10 +13,13 @@ struct ContentView: View {
     @Environment(AppCoordinator.self) private var coordinator
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
-    @State private var overlayManager = OverlayManager()
     @State private var miniBarManager = MiniBarManager()
+    @State private var interviewLensManager = InterviewLensManager()
+    @State private var copilotHotkeyManager = CopilotHotkeyManager()
     @State private var liveSessionController: LiveSessionController?
-    @AppStorage("isTranscriptExpanded") private var isTranscriptExpanded = true
+    @State private var customerCopilotEngine: CustomerCopilotEngine?
+    @State private var workspaceInitializationAttempted = false
+    @AppStorage("interviewContextSelectedTab") private var interviewContextSelectedTab = "transcript"
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showOnboarding = false
     @State private var showConsentSheet = false
@@ -30,12 +33,27 @@ struct ContentView: View {
         let controllerState = liveSessionController?.state ?? LiveSessionState()
 
         return VStack(spacing: 0) {
-            // Compact header
-            HStack {
+            if !controllerState.isRunning {
+                HStack {
                 Text("OpenOats")
                     .font(.system(size: 13, weight: .semibold))
 
                 Spacer()
+
+                Button {
+                    settings.suggestionsAlwaysOnTop.toggle()
+                } label: {
+                    Image(systemName: settings.suggestionsAlwaysOnTop ? "pin.fill" : "pin")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(settings.suggestionsAlwaysOnTop ? Color.accentColor : Color.secondary)
+                .help(settings.suggestionsAlwaysOnTop ? "取消主窗口置顶" : "将主窗口固定在最前")
+                .accessibilityLabel(settings.suggestionsAlwaysOnTop ? "取消主窗口置顶" : "将主窗口固定在最前")
+                .accessibilityValue(settings.suggestionsAlwaysOnTop ? "已开启" : "已关闭")
+                .accessibilityIdentifier("app.alwaysOnTopButton")
 
                 Button {
                     openWindow(id: "notes")
@@ -64,11 +82,12 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .help("Settings")
                 .accessibilityIdentifier("app.settingsButton")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
 
-            Divider()
+                Divider()
+            }
 
             // Post-session banner
             if let lastSession = controllerState.lastEndedSession {
@@ -98,141 +117,307 @@ struct ContentView: View {
                 Divider()
             }
 
-            // Suggestion panel status
             if controllerState.isRunning {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(controllerState.isGeneratingSuggestions ? Color.orange : Color.green)
-                        .frame(width: 6, height: 6)
-                    Text("\(settings.sidebarMode == .sidecast ? "Sidecast" : "Suggestions") \(overlayManager.isVisible ? "visible" : "hidden")")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        toggleOverlay()
-                    } label: {
-                        Text(overlayManager.isVisible ? "Hide Panel" : "Show Panel")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-
-                Divider()
-            }
-
-            if controllerState.isRunning {
-                // Collapsible transcript (hidden when live transcript is disabled)
-                if controllerState.showLiveTranscript {
-                    DisclosureGroup(isExpanded: $isTranscriptExpanded) {
-                        IsolatedTranscriptWrapper(state: controllerState)
-                            .frame(height: 150)
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text("Transcript")
-                                .font(.system(size: 12, weight: .medium))
-                            if !controllerState.liveTranscript.isEmpty {
-                                Text("(\(controllerState.liveTranscript.count))")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            if let liveTranscriptNotice = controllerState.liveTranscriptNotice {
-                                Text("·")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.tertiary)
-                                Text(liveTranscriptNotice)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
-                            if controllerState.recordingElapsedSeconds > 0 {
-                                Text("·")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.tertiary)
-                                Text(ElapsedTimeFormatter.compactMinutesSeconds(controllerState.recordingElapsedSeconds))
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            Spacer()
-                            if isTranscriptExpanded && !controllerState.liveTranscript.isEmpty {
-                                Button {
-                                    openWindow(id: "transcript")
-                                } label: {
-                                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                        .padding(4)
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                }
-                                .buttonStyle(.plain)
-                                .help("Open transcript in separate window")
-
-                                Button {
-                                    copyTranscript()
-                                } label: {
-                                    Image(systemName: "doc.on.doc")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                        .padding(4)
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                }
-                                .buttonStyle(.plain)
-                                .help("Copy transcript")
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                }
-
-                Divider()
-                ScratchpadSection(
-                    text: Binding(
-                        get: { controllerState.scratchpadText },
-                        set: { liveSessionController?.updateScratchpad($0) }
-                    ),
-                    onPasteAssetProviders: { providers in
-                        handleScratchpadAssetPaste(providers)
-                    }
-                )
+                liveInterviewWorkspace(state: controllerState)
             } else {
                 HomeTimelineWorkspaceView(settings: settings)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
 
-            if controllerState.isRunning {
-                Spacer(minLength: 0)
+            if !controllerState.isRunning {
+                Divider()
+
+                IsolatedControlBarWrapper(
+                    state: controllerState,
+                    onToggle: {
+                        pendingControlBarAction = .toggle
+                    },
+                    onMuteToggle: {
+                        liveSessionController?.toggleMicMute()
+                    },
+                    onPauseToggle: {
+                        liveSessionController?.toggleRecordingPause()
+                    },
+                    onConfirmDownload: {
+                        pendingControlBarAction = .confirmDownload
+                    },
+                    onOpenSettings: {
+                        openSettingsWindow()
+                    },
+                    onOpenMicrophonePrivacySettings: {
+                        openMicrophonePrivacySettings()
+                    }
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func liveInterviewWorkspace(state: LiveSessionState) -> some View {
+        if let engine = customerCopilotEngine,
+           let liveSessionController {
+            VStack(spacing: 0) {
+                InterviewWorkspaceHeader(
+                    engine: engine,
+                    liveSessionController: liveSessionController,
+                    interviewLensManager: interviewLensManager,
+                    settings: settings
+                )
+                Divider()
+
+                InterviewWorkspaceQuestionBar(
+                    engine: engine,
+                    interviewLensManager: interviewLensManager
+                )
+                Divider()
+
+                GeometryReader { proxy in
+                    HSplitView {
+                        CustomerCopilotPanelContent(
+                            engine: engine,
+                            liveSessionController: liveSessionController,
+                            interviewLensManager: interviewLensManager
+                        )
+                        .frame(
+                            minWidth: 440,
+                            idealWidth: 540,
+                            maxWidth: .infinity,
+                            minHeight: 0,
+                            maxHeight: .infinity
+                        )
+
+                        liveContextPane(state: state, engine: engine)
+                            .frame(
+                                minWidth: 300,
+                                idealWidth: 340,
+                                maxWidth: 440,
+                                minHeight: 0,
+                                maxHeight: .infinity
+                            )
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .clipped()
+                }
+                .frame(minHeight: 0, maxHeight: .infinity)
+
+                Divider()
+                InterviewWorkspaceActionBar(
+                    engine: engine,
+                    liveSessionController: liveSessionController,
+                    onOpenSettings: openSettingsWindow,
+                    onEndInterview: stopSession
+                )
+            }
+            .frame(minHeight: 0, maxHeight: .infinity)
+            .accessibilityIdentifier("app.interviewWorkspace")
+        } else {
+            VStack(spacing: 10) {
+                if workspaceInitializationAttempted {
+                    Label("面试工作区初始化失败", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("重试初始化", systemImage: "arrow.clockwise") {
+                        prepareInterviewWorkspace()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    ProgressView("正在准备面试工作区…")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .task {
+                prepareInterviewWorkspace()
+            }
+        }
+    }
+
+    private func liveContextPane(
+        state: LiveSessionState,
+        engine: CustomerCopilotEngine
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                contextTabButton(
+                    title: "实时转写",
+                    systemImage: "text.quote",
+                    selection: "transcript",
+                    identifier: "app.interviewContext.transcriptTab"
+                )
+                contextTabButton(
+                    title: "随手笔记",
+                    systemImage: "square.and.pencil",
+                    selection: "scratchpad",
+                    identifier: "app.interviewContext.scratchpadTab"
+                )
+            }
+            .padding(4)
+            .background(Color.primary.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            ZStack {
+                transcriptContextTab(state: state, engine: engine)
+                    .opacity(interviewContextSelectedTab == "transcript" ? 1 : 0)
+                    .allowsHitTesting(interviewContextSelectedTab == "transcript")
+                    .accessibilityHidden(interviewContextSelectedTab != "transcript")
+
+                ScratchpadSection(
+                    text: Binding(
+                        get: { state.scratchpadText },
+                        set: { liveSessionController?.updateScratchpad($0) }
+                    ),
+                    onPasteAssetProviders: handleScratchpadAssetPaste
+                )
+                .opacity(interviewContextSelectedTab == "scratchpad" ? 1 : 0)
+                .allowsHitTesting(interviewContextSelectedTab == "scratchpad")
+                .accessibilityHidden(interviewContextSelectedTab != "scratchpad")
+            }
+            .frame(minHeight: 0, maxHeight: .infinity)
+        }
+        .frame(minHeight: 0, maxHeight: .infinity)
+        .clipped()
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.36))
+        .onAppear {
+            if interviewContextSelectedTab != "transcript"
+                && interviewContextSelectedTab != "scratchpad" {
+                interviewContextSelectedTab = "transcript"
+            }
+        }
+    }
+
+    private func contextTabButton(
+        title: String,
+        systemImage: String,
+        selection: String,
+        identifier: String
+    ) -> some View {
+        let isSelected = interviewContextSelectedTab == selection
+        return Button {
+            interviewContextSelectedTab = selection
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+        )
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+            }
+        }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func transcriptContextTab(
+        state: LiveSessionState,
+        engine: CustomerCopilotEngine
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Text("实时转写")
+                    .font(.caption.weight(.semibold))
+                if !state.liveTranscript.isEmpty {
+                    Text("\(state.liveTranscript.count)")
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                if state.recordingElapsedSeconds > 0 {
+                    Text(ElapsedTimeFormatter.compactMinutesSeconds(state.recordingElapsedSeconds))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                if !state.liveTranscript.isEmpty {
+                Button {
+                    openWindow(id: "transcript")
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                    .help("在独立窗口打开转写")
+                    .accessibilityLabel("在独立窗口打开转写")
+
+                Button {
+                    copyTranscript()
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                    .help("复制转写")
+                    .accessibilityLabel("复制转写")
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Toggle(
+                    "候选人转写用于后续提示",
+                    isOn: Binding(
+                        get: { engine.includeCandidateAnswersInContext },
+                        set: { engine.includeCandidateAnswersInContext = $0 }
+                    )
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(engine.interviewAudioMode != .manualStreamingASR)
+
+                Label(
+                    engine.includeCandidateAnswersInContext
+                        ? "会用于后续问题 · 历史每轮最多 500 字"
+                        : "仅保存在本机，不发送给后续文字模型",
+                    systemImage: engine.includeCandidateAnswersInContext ? "arrow.up.circle" : "lock.fill"
+                )
+                .font(.caption2)
+                .foregroundStyle(engine.includeCandidateAnswersInContext ? Color.accentColor : Color.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let notice = state.liveTranscriptNotice {
+                Text(notice)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Divider()
 
-            // Bottom bar: live indicator + model
-            IsolatedControlBarWrapper(
-                state: controllerState,
-                onToggle: {
-                    pendingControlBarAction = .toggle
-                },
-                onMuteToggle: {
-                    liveSessionController?.toggleMicMute()
-                },
-                onPauseToggle: {
-                    liveSessionController?.toggleRecordingPause()
-                },
-                onConfirmDownload: {
-                    pendingControlBarAction = .confirmDownload
-                },
-                onOpenSettings: {
-                    openSettingsWindow()
-                },
-                onOpenMicrophonePrivacySettings: {
-                    openMicrophonePrivacySettings()
-                }
-            )
+            if state.showLiveTranscript {
+                IsolatedTranscriptWrapper(state: state)
+                    .frame(minHeight: 0, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView(
+                    "实时转写已关闭",
+                    systemImage: "text.quote",
+                    description: Text("可在设置中重新启用；音频采集和面试回答不受影响。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(minHeight: 0, maxHeight: .infinity)
     }
 
     private var bodyWithModifiers: some View {
@@ -244,8 +429,8 @@ struct ContentView: View {
 
         return rootContent
             .frame(
-                minWidth: isRunning ? 360 : 460,
-                maxWidth: isRunning ? 600 : .infinity,
+                minWidth: isRunning ? 820 : 460,
+                maxWidth: .infinity,
                 minHeight: 400,
                 maxHeight: .infinity,
                 alignment: .topLeading
@@ -288,13 +473,18 @@ struct ContentView: View {
         }
         .task {
             if !hasCompletedOnboarding {
-                showOnboarding = true
+                // Customer Copilot does not require an API/embedding provider wizard.
+                hasCompletedOnboarding = true
             }
+
+            prepareInterviewWorkspace()
+            interviewLensManager.configure(settings: settings, defaults: container.defaults)
 
             // Create and wire the controller
             let controller = LiveSessionController(coordinator: coordinator, container: container)
-            controller.onRunningStateChanged = { [weak miniBarManager, weak overlayManager] isRunning in
+            controller.onRunningStateChanged = { [weak miniBarManager, weak interviewLensManager] isRunning in
                 if isRunning {
+                    prepareInterviewWorkspace()
                     miniBarManager?.state.onTap = {
                         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID }) {
                             window.makeKeyAndOrderFront(nil)
@@ -302,19 +492,17 @@ struct ContentView: View {
                         }
                     }
                     showMiniBar(controller: controller, miniBarManager: miniBarManager)
-                    // Start the selected realtime sidebar and show the overlay.
-                    if settings.sidebarMode == .classicSuggestions {
-                        coordinator.suggestionEngine?.startPreFetching()
-                    }
-                    if settings.suggestionPanelEnabled {
-                        showSidebarContent()
-                    }
+                    interviewLensManager?.restoreIfNeeded(
+                        engine: coordinator.customerCopilotEngine,
+                        sourceWindow: NSApp.windows.first(where: {
+                            $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID
+                        })
+                    )
                 } else {
                     miniBarManager?.hide()
-                    // Stop the classic pre-fetcher and hide the panel after delay.
-                    coordinator.suggestionEngine?.stopPreFetching()
-                    overlayManager?.hideAfterDelay(seconds: 2)
+                    interviewLensManager?.suspendForSessionEnd()
                 }
+                configureMainWindowForInterview(isRunning)
             }
             controller.openNotesWindow = {
                 openWindow(id: "notes")
@@ -324,8 +512,37 @@ struct ContentView: View {
             }
             coordinator.liveSessionController = controller
             liveSessionController = controller
+            configureMainWindowForInterview(controller.state.isRunning)
 
-            overlayManager.defaults = container.defaults
+            copilotHotkeyManager.configure(primaryShortcut: settings.copilotTurnHotkey)
+            copilotHotkeyManager.onCommitTurn = { coordinator.customerCopilotEngine?.commitActiveInterviewTurn() }
+            copilotHotkeyManager.onMerge = { coordinator.customerCopilotEngine?.mergePreviousCustomerUtterance() }
+            copilotHotkeyManager.onStop = { coordinator.customerCopilotEngine?.stopGeneration() }
+            copilotHotkeyManager.isLensToggleEnabled = { [weak controller] in
+                controller?.state.isRunning == true
+            }
+            copilotHotkeyManager.onToggleLens = { [weak controller, weak interviewLensManager, weak coordinator] in
+                guard controller?.state.isRunning == true,
+                      let interviewLensManager,
+                      let engine = coordinator?.customerCopilotEngine else { return }
+                interviewLensManager.toggleVisibility(
+                    engine: engine,
+                    sourceWindow: NSApp.windows.first(where: {
+                        $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID
+                    })
+                )
+            }
+            copilotHotkeyManager.isLensNavigationEnabled = { [weak interviewLensManager] in
+                interviewLensManager?.isVisible == true
+            }
+            copilotHotkeyManager.onLensPrevious = { [weak interviewLensManager] in
+                interviewLensManager?.previousPage()
+            }
+            copilotHotkeyManager.onLensNext = { [weak interviewLensManager] in
+                interviewLensManager?.nextPage()
+            }
+            copilotHotkeyManager.start()
+
             miniBarManager.defaults = container.defaults
 
             // Setup calendar integration before the first await so the home timeline
@@ -365,27 +582,24 @@ struct ContentView: View {
             container.updateCalendarIntegration(enabled: settings.calendarIntegrationEnabled)
         }
         .onChange(of: settings.suggestionsAlwaysOnTop) {
-            overlayManager.updateAlwaysOnTop(settings.suggestionsAlwaysOnTop)
+            configureMainWindowForInterview(liveSessionController?.state.isRunning == true)
         }
-        .onChange(of: settings.sidebarMode) {
-            if settings.sidebarMode == .classicSuggestions {
-                coordinator.suggestionEngine?.startPreFetching()
-            } else {
-                coordinator.suggestionEngine?.stopPreFetching()
-            }
-            guard liveSessionController?.state.isRunning == true, settings.suggestionPanelEnabled else { return }
-            showSidebarContent()
+        .onChange(of: settings.copilotTurnHotkey) { _, shortcut in
+            copilotHotkeyManager.configure(primaryShortcut: shortcut)
+        }
+        .onChange(of: settings.hideFromScreenShare) { _, hidden in
+            interviewLensManager.updateSharingType(hidden: hidden)
+        }
+        .onDisappear {
+            copilotHotkeyManager.stop()
+            interviewLensManager.tearDown()
         }
     }
 
     private var contentWithEventHandlers: some View {
         contentWithLifecycle
-        .onKeyPress(.escape) {
-            overlayManager.hide()
-            return .handled
-        }
         .onReceive(NotificationCenter.default.publisher(for: .toggleSuggestionPanel)) { _ in
-            toggleOverlay()
+            revealInterviewWorkspace()
         }
         .onChange(of: pendingControlBarAction) {
             guard let action = pendingControlBarAction else { return }
@@ -434,26 +648,64 @@ struct ContentView: View {
         miniBarManager.show()
     }
 
-    private func toggleOverlay() {
-        switch settings.sidebarMode {
-        case .classicSuggestions:
-            overlayManager.toggle(content: SuggestionPanelContent(engine: coordinator.suggestionEngine))
-        case .sidecast:
-            overlayManager.toggleSidecast(content: sidecastContent())
-        }
+    private func prepareInterviewWorkspace() {
+        container.ensureViewServicesInitialized(settings: settings, coordinator: coordinator)
+        customerCopilotEngine = coordinator.customerCopilotEngine
+        workspaceInitializationAttempted = true
     }
 
-    private func showSidebarContent() {
-        switch settings.sidebarMode {
-        case .classicSuggestions:
-            overlayManager.showSidePanel(content: SuggestionPanelContent(engine: coordinator.suggestionEngine))
-        case .sidecast:
-            overlayManager.showSidecastSidebar(content: sidecastContent())
-        }
+    private func revealInterviewWorkspace() {
+        configureMainWindowForInterview(liveSessionController?.state.isRunning == true)
+        guard let window = NSApp.windows.first(where: {
+            $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID
+        }) else { return }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
-    private func sidecastContent() -> SidecastPanelContent {
-        SidecastPanelContent(settings: settings, engine: coordinator.sidecastEngine)
+    private func configureMainWindowForInterview(_ isRunning: Bool) {
+        guard let window = NSApp.windows.first(where: {
+            $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID
+        }) else { return }
+
+        if window.frameAutosaveName != OpenOatsWindowSizing.mainWindowFrameAutosaveName {
+            _ = window.setFrameUsingName(OpenOatsWindowSizing.mainWindowFrameAutosaveName)
+            _ = window.setFrameAutosaveName(OpenOatsWindowSizing.mainWindowFrameAutosaveName)
+        }
+
+        window.level = settings.suggestionsAlwaysOnTop ? .floating : .normal
+        var collectionBehavior = window.collectionBehavior
+        if isRunning {
+            collectionBehavior.insert(.canJoinAllSpaces)
+            collectionBehavior.insert(.fullScreenAuxiliary)
+        } else {
+            collectionBehavior.remove(.canJoinAllSpaces)
+            collectionBehavior.remove(.fullScreenAuxiliary)
+        }
+        window.collectionBehavior = collectionBehavior
+
+        let minimumSize = isRunning
+            ? OpenOatsWindowSizing.interviewWorkspaceMinSize
+            : OpenOatsWindowSizing.mainWindowCollapsedMinSize
+        window.contentMinSize = minimumSize
+        guard isRunning else { return }
+
+        let currentFrame = window.frame
+        let newWidth = max(currentFrame.width, minimumSize.width)
+        let newHeight = max(currentFrame.height, minimumSize.height)
+        guard newWidth != currentFrame.width || newHeight != currentFrame.height else { return }
+
+        var frame = currentFrame
+        frame.origin.x -= max(0, newWidth - currentFrame.width)
+        frame.size.width = newWidth
+        frame.size.height = newHeight
+        if let visibleFrame = window.screen?.visibleFrame {
+            frame = frame.intersection(visibleFrame)
+            frame.size.width = min(max(frame.width, minimumSize.width), visibleFrame.width)
+            frame.size.height = min(max(frame.height, minimumSize.height), visibleFrame.height)
+        }
+        window.setFrame(frame, display: true, animate: true)
     }
 
     private func copyTranscript() {
@@ -681,37 +933,45 @@ private struct PostSessionBanner: View {
 private struct ScratchpadSection: View {
     @Binding var text: String
     let onPasteAssetProviders: ([NSItemProvider]) -> Void
-    @State private var isExpanded = true
 
     private let pasteAssetTypes: [UTType] = [.png, .jpeg, .tiff, .image, .fileURL]
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            TextEditor(text: $text)
-                .font(.system(size: 12))
-                .scrollContentBackground(.hidden)
-                .frame(height: 100)
-                .padding(4)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityIdentifier("app.scratchpadEditor")
-                .onPasteCommand(of: pasteAssetTypes) { providers in
-                    onPasteAssetProviders(providers)
-                }
-        } label: {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text("My Notes")
-                    .font(.system(size: 12, weight: .medium))
+                Text("随手笔记")
+                    .font(.caption.weight(.semibold))
                 if !text.isEmpty {
                     Circle()
                         .fill(Color.accentColor)
                         .frame(width: 5, height: 5)
+                        .accessibilityHidden(true)
                 }
                 Spacer()
+                Text("自动保存")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
+
+            TextEditor(text: $text)
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 0, maxHeight: .infinity)
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                )
+                .accessibilityIdentifier("app.scratchpadEditor")
+                .accessibilityLabel("随手笔记编辑器")
+                .onPasteCommand(of: pasteAssetTypes) { providers in
+                    onPasteAssetProviders(providers)
+                }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -743,6 +1003,9 @@ private struct IsolatedControlBarWrapper: View {
         ControlBar(
             isRunning: state.isRunning,
             audioLevel: state.audioLevel,
+            micAudioLevel: state.micAudioLevel,
+            systemAudioLevel: state.systemAudioLevel,
+            micHasCapturedFrames: state.micHasCapturedFrames,
             recordingElapsedSeconds: state.recordingElapsedSeconds,
             isMicMuted: state.isMicMuted,
             isRecordingPaused: state.isRecordingPaused,

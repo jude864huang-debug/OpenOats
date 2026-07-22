@@ -26,6 +26,8 @@ struct MiniBarContent: View {
         .onTapGesture {
             state.onTap()
         }
+        .accessibilityLabel("面试悬浮条")
+        .accessibilityIdentifier("copilot.miniBar")
     }
 }
 

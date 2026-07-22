@@ -2,10 +2,10 @@ cask "openoats" do
   version "1.83.1"
   sha256 "688daddddc66e9a66506ec11886cf6fc5ff24fc2e05df9a0ad19b9da109ae8f3"
 
-  url "https://github.com/yazinsai/OpenOats/releases/download/v#{version}/OpenOats.dmg"
+  url "https://github.com/jude864huang-debug/OpenOats/releases/download/v#{version}/OpenOats.dmg"
   name "OpenOats"
   desc "Real-time meeting copilot"
-  homepage "https://github.com/yazinsai/OpenOats"
+  homepage "https://github.com/jude864huang-debug/OpenOats"
 
   livecheck do
     url :url

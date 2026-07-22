@@ -7,6 +7,13 @@ import Security
 @Observable
 @MainActor
 final class SettingsStore {
+    static let defaultInterviewCodexCueModel = "gpt-5.3-codex-spark"
+    static let defaultInterviewReferenceAnswerModel = "gpt-5.6-terra"
+    static let defaultInterviewMainAnswerModel = defaultInterviewReferenceAnswerModel
+    static let defaultInterviewFallbackAnswerModel = defaultInterviewCodexCueModel
+    static let defaultInterviewKnowledgeBriefTokenBudget = 6_000
+    static let interviewKnowledgeBriefTokenRange = 4_000...6_000
+
     private let defaults: UserDefaults
     private let secretStore: AppSecretStore
     private static let enableLiveTranscriptCleanupLegacyKey = "enableTranscriptRefinement"
@@ -648,6 +655,323 @@ final class SettingsStore {
             withMutation(keyPath: \.kbSimilarityThreshold) {
                 _kbSimilarityThreshold = newValue
                 defaults.set(newValue, forKey: "kbSimilarityThreshold")
+            }
+        }
+    }
+
+    // MARK: - Interview Copilot Settings
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewAudioMode: InterviewAudioMode
+    var interviewAudioMode: InterviewAudioMode {
+        get { access(keyPath: \.interviewAudioMode); return _interviewAudioMode }
+        set {
+            withMutation(keyPath: \.interviewAudioMode) {
+                _interviewAudioMode = newValue
+                defaults.set(newValue.rawValue, forKey: "interviewAudioMode")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _tencentASRAppID: String
+    var tencentASRAppID: String {
+        get { access(keyPath: \.tencentASRAppID); return _tencentASRAppID }
+        set {
+            withMutation(keyPath: \.tencentASRAppID) {
+                _tencentASRAppID = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                defaults.set(_tencentASRAppID, forKey: "tencentASRAppID")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _tencentASRSecretID: String
+    var tencentASRSecretID: String {
+        get {
+            access(keyPath: \.tencentASRSecretID)
+            return loadSecretIfNeeded(key: "tencentASRSecretID", currentValue: _tencentASRSecretID) {
+                _tencentASRSecretID = $0
+            }
+        }
+        set {
+            withMutation(keyPath: \.tencentASRSecretID) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                _tencentASRSecretID = trimmed
+                markSecretLoaded("tencentASRSecretID")
+                secretStore.save(key: "tencentASRSecretID", value: trimmed)
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _tencentASRSecretKey: String
+    var tencentASRSecretKey: String {
+        get {
+            access(keyPath: \.tencentASRSecretKey)
+            return loadSecretIfNeeded(key: "tencentASRSecretKey", currentValue: _tencentASRSecretKey) {
+                _tencentASRSecretKey = $0
+            }
+        }
+        set {
+            withMutation(keyPath: \.tencentASRSecretKey) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                _tencentASRSecretKey = trimmed
+                markSecretLoaded("tencentASRSecretKey")
+                secretStore.save(key: "tencentASRSecretKey", value: trimmed)
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewASRAutoHotwordsEnabled: Bool
+    var interviewASRAutoHotwordsEnabled: Bool {
+        get { access(keyPath: \.interviewASRAutoHotwordsEnabled); return _interviewASRAutoHotwordsEnabled }
+        set {
+            withMutation(keyPath: \.interviewASRAutoHotwordsEnabled) {
+                _interviewASRAutoHotwordsEnabled = newValue
+                defaults.set(newValue, forKey: "interviewASRAutoHotwordsEnabled")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewAutoReferenceAnswerEnabled: Bool
+    var interviewAutoReferenceAnswerEnabled: Bool {
+        get {
+            access(keyPath: \.interviewAutoReferenceAnswerEnabled)
+            return _interviewAutoReferenceAnswerEnabled
+        }
+        set {
+            withMutation(keyPath: \.interviewAutoReferenceAnswerEnabled) {
+                _interviewAutoReferenceAnswerEnabled = newValue
+                defaults.set(newValue, forKey: "interviewAutoReferenceAnswerEnabled")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewReferenceAnswerModel: String
+    var interviewReferenceAnswerModel: String {
+        get {
+            access(keyPath: \.interviewReferenceAnswerModel)
+            return _interviewReferenceAnswerModel
+        }
+        set {
+            withMutation(keyPath: \.interviewReferenceAnswerModel) {
+                _interviewReferenceAnswerModel = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                defaults.set(_interviewReferenceAnswerModel, forKey: "interviewReferenceAnswerModel")
+            }
+        }
+    }
+
+    /// Renamed public surface for the v7 single-answer pipeline. The legacy
+    /// storage key is intentionally retained so upgrades do not lose choices.
+    var interviewMainAnswerModel: String {
+        get { interviewReferenceAnswerModel }
+        set { interviewReferenceAnswerModel = newValue }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewIncludeCandidateAnswersInContext: Bool
+    var interviewIncludeCandidateAnswersInContext: Bool {
+        get {
+            access(keyPath: \.interviewIncludeCandidateAnswersInContext)
+            return _interviewIncludeCandidateAnswersInContext
+        }
+        set {
+            withMutation(keyPath: \.interviewIncludeCandidateAnswersInContext) {
+                _interviewIncludeCandidateAnswersInContext = newValue
+                defaults.set(newValue, forKey: "interviewIncludeCandidateAnswersInContext")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewCodexSpeedModeEnabled: Bool
+    var interviewCodexSpeedModeEnabled: Bool {
+        get {
+            access(keyPath: \.interviewCodexSpeedModeEnabled)
+            return _interviewCodexSpeedModeEnabled
+        }
+        set {
+            withMutation(keyPath: \.interviewCodexSpeedModeEnabled) {
+                _interviewCodexSpeedModeEnabled = newValue
+                defaults.set(newValue, forKey: "interviewCodexSpeedModeEnabled")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewCodexCueModel: String
+    var interviewCodexCueModel: String {
+        get {
+            access(keyPath: \.interviewCodexCueModel)
+            return _interviewCodexCueModel
+        }
+        set {
+            withMutation(keyPath: \.interviewCodexCueModel) {
+                _interviewCodexCueModel = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                defaults.set(_interviewCodexCueModel, forKey: "interviewCodexCueModel")
+            }
+        }
+    }
+
+    var interviewFallbackAnswerModel: String {
+        get { interviewCodexCueModel }
+        set { interviewCodexCueModel = newValue }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewDelayedFallbackEnabled: Bool
+    var interviewDelayedFallbackEnabled: Bool {
+        get {
+            access(keyPath: \.interviewDelayedFallbackEnabled)
+            return _interviewDelayedFallbackEnabled
+        }
+        set {
+            withMutation(keyPath: \.interviewDelayedFallbackEnabled) {
+                _interviewDelayedFallbackEnabled = newValue
+                defaults.set(newValue, forKey: "interviewDelayedFallbackEnabled")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewAnswerDepth: InterviewAnswerDepth
+    var interviewAnswerDepth: InterviewAnswerDepth {
+        get {
+            access(keyPath: \.interviewAnswerDepth)
+            return _interviewAnswerDepth
+        }
+        set {
+            withMutation(keyPath: \.interviewAnswerDepth) {
+                _interviewAnswerDepth = newValue
+                defaults.set(newValue.rawValue, forKey: "interviewAnswerDepth")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewKnowledgeBriefTokenBudget: Int
+    var interviewKnowledgeBriefTokenBudget: Int {
+        get {
+            access(keyPath: \.interviewKnowledgeBriefTokenBudget)
+            return _interviewKnowledgeBriefTokenBudget
+        }
+        set {
+            withMutation(keyPath: \.interviewKnowledgeBriefTokenBudget) {
+                _interviewKnowledgeBriefTokenBudget = min(
+                    max(newValue, Self.interviewKnowledgeBriefTokenRange.lowerBound),
+                    Self.interviewKnowledgeBriefTokenRange.upperBound
+                )
+                defaults.set(_interviewKnowledgeBriefTokenBudget, forKey: "interviewKnowledgeBriefTokenBudget")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewCodexFastServiceTierEnabled: Bool
+    var interviewCodexFastServiceTierEnabled: Bool {
+        get {
+            access(keyPath: \.interviewCodexFastServiceTierEnabled)
+            return _interviewCodexFastServiceTierEnabled
+        }
+        set {
+            withMutation(keyPath: \.interviewCodexFastServiceTierEnabled) {
+                _interviewCodexFastServiceTierEnabled = newValue
+                defaults.set(newValue, forKey: "interviewCodexFastServiceTierEnabled")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewASRHotwordOverrides: String
+    var interviewASRHotwordOverrides: String {
+        get { access(keyPath: \.interviewASRHotwordOverrides); return _interviewASRHotwordOverrides }
+        set {
+            withMutation(keyPath: \.interviewASRHotwordOverrides) {
+                _interviewASRHotwordOverrides = newValue
+                defaults.set(newValue, forKey: "interviewASRHotwordOverrides")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _qwenASRExecutablePath: String
+    var qwenASRExecutablePath: String {
+        get { access(keyPath: \.qwenASRExecutablePath); return _qwenASRExecutablePath }
+        set {
+            withMutation(keyPath: \.qwenASRExecutablePath) {
+                _qwenASRExecutablePath = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                defaults.set(_qwenASRExecutablePath, forKey: "qwenASRExecutablePath")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _qwenASRModelPath: String
+    var qwenASRModelPath: String {
+        get { access(keyPath: \.qwenASRModelPath); return _qwenASRModelPath }
+        set {
+            withMutation(keyPath: \.qwenASRModelPath) {
+                _qwenASRModelPath = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                defaults.set(_qwenASRModelPath, forKey: "qwenASRModelPath")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _copilotTurnHotkey: CopilotTurnHotkey
+    var copilotTurnHotkey: CopilotTurnHotkey {
+        get { access(keyPath: \.copilotTurnHotkey); return _copilotTurnHotkey }
+        set {
+            withMutation(keyPath: \.copilotTurnHotkey) {
+                _copilotTurnHotkey = newValue
+                defaults.set(try? JSONEncoder().encode(newValue), forKey: "copilotTurnHotkey")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewLensEnabled: Bool
+    var interviewLensEnabled: Bool {
+        get { access(keyPath: \.interviewLensEnabled); return _interviewLensEnabled }
+        set {
+            withMutation(keyPath: \.interviewLensEnabled) {
+                _interviewLensEnabled = newValue
+                defaults.set(newValue, forKey: "interviewLensEnabled")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewLensLastSelection: InterviewLensPersistentSelection
+    var interviewLensLastSelection: InterviewLensPersistentSelection {
+        get { access(keyPath: \.interviewLensLastSelection); return _interviewLensLastSelection }
+        set {
+            withMutation(keyPath: \.interviewLensLastSelection) {
+                _interviewLensLastSelection = newValue
+                defaults.set(newValue.rawValue, forKey: "interviewLensLastSelection")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewLensFontScale: InterviewLensFontScale
+    var interviewLensFontScale: InterviewLensFontScale {
+        get { access(keyPath: \.interviewLensFontScale); return _interviewLensFontScale }
+        set {
+            withMutation(keyPath: \.interviewLensFontScale) {
+                _interviewLensFontScale = newValue
+                defaults.set(newValue.rawValue, forKey: "interviewLensFontScale")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewLensSize: InterviewLensSize
+    var interviewLensSize: InterviewLensSize {
+        get { access(keyPath: \.interviewLensSize); return _interviewLensSize }
+        set {
+            withMutation(keyPath: \.interviewLensSize) {
+                _interviewLensSize = newValue
+                defaults.set(try? JSONEncoder().encode(newValue), forKey: "interviewLensSize")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _interviewLensDisplayPlacements: [String: InterviewLensDisplayPlacement]
+    var interviewLensDisplayPlacements: [String: InterviewLensDisplayPlacement] {
+        get {
+            access(keyPath: \.interviewLensDisplayPlacements)
+            return _interviewLensDisplayPlacements
+        }
+        set {
+            withMutation(keyPath: \.interviewLensDisplayPlacements) {
+                _interviewLensDisplayPlacements = newValue
+                defaults.set(
+                    try? JSONEncoder().encode(newValue),
+                    forKey: "interviewLensDisplayPlacements"
+                )
             }
         }
     }
@@ -1453,7 +1777,7 @@ final class SettingsStore {
             self._suggestionPanelEnabled = defaults.bool(forKey: "suggestionPanelEnabled")
         }
         if defaults.object(forKey: "suggestionsAlwaysOnTop") == nil {
-            self._suggestionsAlwaysOnTop = true
+            self._suggestionsAlwaysOnTop = false
         } else {
             self._suggestionsAlwaysOnTop = defaults.bool(forKey: "suggestionsAlwaysOnTop")
         }
@@ -1471,6 +1795,125 @@ final class SettingsStore {
             ? defaults.double(forKey: "preFetchIntervalSeconds") : 4.0
         self._kbSimilarityThreshold = defaults.object(forKey: "kbSimilarityThreshold") != nil
             ? defaults.double(forKey: "kbSimilarityThreshold") : 0.35
+
+        // Interview Copilot Settings. Users upgrading from the old realtime-first
+        // preference intentionally land on manual streaming ASR.
+        self._interviewAudioMode = InterviewAudioMode(
+            rawValue: defaults.string(forKey: "interviewAudioMode") ?? ""
+        ) ?? .manualStreamingASR
+        self._tencentASRAppID = defaults.string(forKey: "tencentASRAppID") ?? ""
+        self._tencentASRSecretID = ""
+        self._tencentASRSecretKey = ""
+        if defaults.object(forKey: "interviewASRAutoHotwordsEnabled") == nil {
+            self._interviewASRAutoHotwordsEnabled = true
+        } else {
+            self._interviewASRAutoHotwordsEnabled = defaults.bool(forKey: "interviewASRAutoHotwordsEnabled")
+        }
+        if defaults.object(forKey: "interviewAutoReferenceAnswerEnabled") == nil {
+            self._interviewAutoReferenceAnswerEnabled = true
+        } else {
+            self._interviewAutoReferenceAnswerEnabled = defaults.bool(forKey: "interviewAutoReferenceAnswerEnabled")
+        }
+        let storedReferenceAnswerModel = defaults.string(forKey: "interviewReferenceAnswerModel")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self._interviewReferenceAnswerModel = storedReferenceAnswerModel.isEmpty
+            ? Self.defaultInterviewReferenceAnswerModel
+            : storedReferenceAnswerModel
+        if defaults.object(forKey: "interviewIncludeCandidateAnswersInContext") == nil {
+            self._interviewIncludeCandidateAnswersInContext = false
+        } else {
+            self._interviewIncludeCandidateAnswersInContext = defaults.bool(
+                forKey: "interviewIncludeCandidateAnswersInContext"
+            )
+        }
+        if defaults.object(forKey: "interviewCodexSpeedModeEnabled") == nil {
+            self._interviewCodexSpeedModeEnabled = true
+        } else {
+            self._interviewCodexSpeedModeEnabled = defaults.bool(forKey: "interviewCodexSpeedModeEnabled")
+        }
+        let storedCodexCueModel = defaults.string(forKey: "interviewCodexCueModel")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self._interviewCodexCueModel = storedCodexCueModel.isEmpty
+            ? Self.defaultInterviewCodexCueModel
+            : storedCodexCueModel
+        if defaults.object(forKey: "interviewDelayedFallbackEnabled") == nil {
+            self._interviewDelayedFallbackEnabled = true
+        } else {
+            self._interviewDelayedFallbackEnabled = defaults.bool(forKey: "interviewDelayedFallbackEnabled")
+        }
+        self._interviewAnswerDepth = InterviewAnswerDepth(
+            rawValue: defaults.string(forKey: "interviewAnswerDepth") ?? ""
+        ) ?? .standard
+        if defaults.object(forKey: "interviewKnowledgeBriefTokenBudget") == nil {
+            self._interviewKnowledgeBriefTokenBudget = Self.defaultInterviewKnowledgeBriefTokenBudget
+        } else {
+            self._interviewKnowledgeBriefTokenBudget = min(
+                max(
+                    defaults.integer(forKey: "interviewKnowledgeBriefTokenBudget"),
+                    Self.interviewKnowledgeBriefTokenRange.lowerBound
+                ),
+                Self.interviewKnowledgeBriefTokenRange.upperBound
+            )
+        }
+        if defaults.object(forKey: "interviewCodexFastServiceTierEnabled") == nil {
+            self._interviewCodexFastServiceTierEnabled = false
+        } else {
+            self._interviewCodexFastServiceTierEnabled = defaults.bool(forKey: "interviewCodexFastServiceTierEnabled")
+        }
+        self._interviewASRHotwordOverrides = defaults.string(forKey: "interviewASRHotwordOverrides") ?? ""
+        self._qwenASRExecutablePath = defaults.string(forKey: "qwenASRExecutablePath") ?? ""
+        self._qwenASRModelPath = defaults.string(forKey: "qwenASRModelPath") ?? ""
+        self._copilotTurnHotkey = defaults.data(forKey: "copilotTurnHotkey")
+            .flatMap { try? JSONDecoder().decode(CopilotTurnHotkey.self, from: $0) }
+            ?? .defaultTurn
+        self._interviewLensEnabled = defaults.bool(forKey: "interviewLensEnabled")
+
+        let storedInterviewLensSelection = defaults.string(forKey: "interviewLensLastSelection")
+        let decodedInterviewLensSelection = storedInterviewLensSelection
+            .flatMap(InterviewLensPersistentSelection.init(rawValue:))
+            ?? .defaultValue
+        let interviewLensSelection: InterviewLensPersistentSelection = switch decodedInterviewLensSelection {
+        case .question, .quickIdea, .referenceAnswer: .answer
+        default: decodedInterviewLensSelection
+        }
+        self._interviewLensLastSelection = interviewLensSelection
+        if defaults.object(forKey: "interviewLensLastSelection") != nil,
+           storedInterviewLensSelection != interviewLensSelection.rawValue {
+            defaults.set(interviewLensSelection.rawValue, forKey: "interviewLensLastSelection")
+        }
+
+        let storedInterviewLensFontScale = defaults.integer(forKey: "interviewLensFontScale")
+        let interviewLensFontScale = InterviewLensFontScale(rawValue: storedInterviewLensFontScale)
+            ?? .defaultValue
+        self._interviewLensFontScale = interviewLensFontScale
+        if defaults.object(forKey: "interviewLensFontScale") != nil,
+           storedInterviewLensFontScale != interviewLensFontScale.rawValue {
+            defaults.set(interviewLensFontScale.rawValue, forKey: "interviewLensFontScale")
+        }
+
+        let interviewLensSize = defaults.data(forKey: "interviewLensSize")
+            .flatMap { try? JSONDecoder().decode(InterviewLensSize.self, from: $0) }
+            ?? .defaultValue
+        self._interviewLensSize = interviewLensSize
+        if defaults.object(forKey: "interviewLensSize") != nil {
+            defaults.set(try? JSONEncoder().encode(interviewLensSize), forKey: "interviewLensSize")
+        }
+
+        let interviewLensDisplayPlacements = defaults.data(forKey: "interviewLensDisplayPlacements")
+            .flatMap {
+                try? JSONDecoder().decode(
+                    [String: InterviewLensDisplayPlacement].self,
+                    from: $0
+                )
+            }
+            ?? [:]
+        self._interviewLensDisplayPlacements = interviewLensDisplayPlacements
+        if defaults.object(forKey: "interviewLensDisplayPlacements") != nil {
+            defaults.set(
+                try? JSONEncoder().encode(interviewLensDisplayPlacements),
+                forKey: "interviewLensDisplayPlacements"
+            )
+        }
 
         // Capture Settings
         self._inputDeviceID = AudioDeviceID(defaults.integer(forKey: "inputDeviceID"))
@@ -1547,7 +1990,7 @@ final class SettingsStore {
         // Privacy Settings
         self._hasAcknowledgedRecordingConsent = defaults.bool(forKey: "hasAcknowledgedRecordingConsent")
         if defaults.object(forKey: "hideFromScreenShare") == nil {
-            self._hideFromScreenShare = true
+            self._hideFromScreenShare = false
         } else {
             self._hideFromScreenShare = defaults.bool(forKey: "hideFromScreenShare")
         }
@@ -1623,6 +2066,44 @@ final class SettingsStore {
     var kbFolderURL: URL? {
         guard !kbFolderPath.isEmpty else { return nil }
         return URL(fileURLWithPath: kbFolderPath)
+    }
+
+    var hasTencentASRCredentials: Bool {
+        !tencentASRAppID.isEmpty && !tencentASRSecretID.isEmpty && !tencentASRSecretKey.isEmpty
+    }
+
+    /// User-owned terms are kept separate from automatically extracted knowledge
+    /// terms so they can receive the highest Tencent hotword weight.
+    var interviewASRManualTerms: [String] {
+        let combined = [transcriptionCustomVocabulary, interviewASRHotwordOverrides]
+            .joined(separator: "\n")
+        var seen: Set<String> = []
+        return combined
+            .components(separatedBy: CharacterSet(charactersIn: ",，;；\n\t"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { term in
+                guard !term.isEmpty else { return false }
+                return seen.insert(term.lowercased()).inserted
+            }
+    }
+
+    var qwenASRRuntimeStatus: Qwen3RuntimeStatus {
+        Qwen3RuntimeConfiguration.discover(
+            executableOverride: qwenASRExecutablePath,
+            modelOverride: qwenASRModelPath
+        ).status
+    }
+
+    var resolvedQwenASRExecutableURL: URL? {
+        qwenASRRuntimeStatus.executablePath.map { URL(fileURLWithPath: $0) }
+    }
+
+    var resolvedQwenASRModelURL: URL? {
+        qwenASRRuntimeStatus.modelPath.map { URL(fileURLWithPath: $0) }
+    }
+
+    var isQwenASRFallbackAvailable: Bool {
+        qwenASRRuntimeStatus.isReady
     }
 
     var locale: Locale {

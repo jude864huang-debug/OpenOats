@@ -16,6 +16,7 @@ struct NotesState {
     var relatedMeetingSuggestions: [MeetingHistorySuggestion] = []
     var linkingMeetingSuggestionKey: String?
     var loadedTranscript: [SessionRecord] = []
+    var loadedInterviewAnswers: [InterviewHistoryAnswer] = []
     var loadedNotes: GeneratedNotes?
     var manualNotesDraft: String = ""
     var savedManualNotesMarkdown: String = ""
@@ -302,6 +303,7 @@ final class NotesController {
             state.savedManualNotesMarkdown = ""
             state.isEditingManualNotes = false
             state.loadedTranscript = []
+            state.loadedInterviewAnswers = []
             state.loadedCalendarEvent = nil
             state.selectedSessionDirectory = nil
             state.loadedAttachments = []
@@ -318,6 +320,7 @@ final class NotesController {
         state.savedManualNotesMarkdown = ""
         state.isEditingManualNotes = false
         state.loadedTranscript = []
+        state.loadedInterviewAnswers = []
         state.loadedCalendarEvent = nil
         state.loadedAttachments = []
         state.availableAudioSources = []
@@ -351,6 +354,7 @@ final class NotesController {
             state.savedManualNotesMarkdown = data.notes?.markdown ?? ""
             state.isEditingManualNotes = unsavedDraft != nil
             state.loadedTranscript = data.transcript
+            state.loadedInterviewAnswers = data.interviewAnswers
             state.loadedCalendarEvent = data.calendarEvent
             state.loadedAttachments = data.attachments
             state.availableAudioSources = data.audioSources
@@ -401,6 +405,7 @@ final class NotesController {
         state.savedManualNotesMarkdown = ""
         state.isEditingManualNotes = false
         state.loadedTranscript = []
+        state.loadedInterviewAnswers = []
         state.loadedCalendarEvent = nil
         state.selectedSessionDirectory = nil
         state.loadedAttachments = []
@@ -467,6 +472,7 @@ final class NotesController {
         state.savedManualNotesMarkdown = ""
         state.isEditingManualNotes = false
         state.loadedTranscript = []
+        state.loadedInterviewAnswers = []
         state.loadedCalendarEvent = nil
         state.loadedAttachments = []
         state.availableAudioSources = []
@@ -911,6 +917,7 @@ final class NotesController {
                 state.selectedSessionID = nil
                 state.loadedNotes = nil
                 state.loadedTranscript = []
+                state.loadedInterviewAnswers = []
                 state.loadedCalendarEvent = nil
             }
             await coordinator.loadHistory()
@@ -927,6 +934,7 @@ final class NotesController {
                 state.selectedSessionID = nil
                 state.loadedNotes = nil
                 state.loadedTranscript = []
+                state.loadedInterviewAnswers = []
                 state.loadedCalendarEvent = nil
             }
             await coordinator.loadHistory()

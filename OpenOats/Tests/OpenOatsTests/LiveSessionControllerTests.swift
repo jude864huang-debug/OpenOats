@@ -136,6 +136,9 @@ final class LiveSessionControllerTests: XCTestCase {
     func testStartSessionTransitionsStateToRecordingSynchronously() {
         let dirs = makeTempDirs()
         let settings = makeSettings(notesDirectory: dirs.notes)
+        settings.tencentASRAppID = "123456"
+        settings.tencentASRSecretID = "test-id"
+        settings.tencentASRSecretKey = "test-key"
         let (controller, coordinator) = makeController(
             root: dirs.root,
             notesDirectory: dirs.notes,
@@ -152,6 +155,33 @@ final class LiveSessionControllerTests: XCTestCase {
         } else {
             XCTFail("Expected .recording state immediately after startSession, got \(coordinator.state)")
         }
+    }
+
+    func testStartingNewSessionClearsPauseStateFromPreviousInterview() throws {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        settings.tencentASRAppID = "123456"
+        settings.tencentASRSecretID = "test-id"
+        settings.tencentASRSecretKey = "test-key"
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+        let engine = try XCTUnwrap(coordinator.transcriptionEngine)
+        engine.isRecordingPaused = true
+        controller.syncProjectedState(settings: settings)
+        XCTAssertTrue(controller.state.isRecordingPaused)
+
+        controller.startSession(settings: settings)
+
+        if case .recording = coordinator.state {
+            // expected: the assertion covers a real new-session transition
+        } else {
+            XCTFail("Expected the next interview to enter recording state")
+        }
+        XCTAssertFalse(engine.isRecordingPaused)
+        XCTAssertFalse(controller.state.isRecordingPaused)
     }
 
     func testCloudStartPreflightBlocksMissingAPIKey() async {

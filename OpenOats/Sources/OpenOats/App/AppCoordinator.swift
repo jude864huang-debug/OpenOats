@@ -136,14 +136,21 @@ final class AppCoordinator {
         get { _sidecastEngine }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _customerCopilotEngine: CustomerCopilotEngine?
+    nonisolated var customerCopilotEngine: CustomerCopilotEngine? {
+        get { _customerCopilotEngine }
+    }
+
     func setViewServices(
         knowledgeBase: KnowledgeBase,
         suggestionEngine: SuggestionEngine,
-        sidecastEngine: SidecastEngine
+        sidecastEngine: SidecastEngine,
+        customerCopilotEngine: CustomerCopilotEngine
     ) {
         _knowledgeBase = knowledgeBase
         _suggestionEngine = suggestionEngine
         _sidecastEngine = sidecastEngine
+        _customerCopilotEngine = customerCopilotEngine
     }
 
     /// The template snapshot frozen at session start (not stop).

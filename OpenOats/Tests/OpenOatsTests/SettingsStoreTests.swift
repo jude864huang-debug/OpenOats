@@ -510,7 +510,7 @@ final class SettingsStoreTests: XCTestCase {
     func testDefaultHideFromScreenShare() {
         let store = makeStore()
         // Defaults to true when key never set
-        XCTAssertTrue(store.hideFromScreenShare)
+        XCTAssertFalse(store.hideFromScreenShare)
     }
 
     // MARK: - UI Settings Group

@@ -20,6 +20,7 @@ enum Log {
     static let webhook = Logger(subsystem: subsystem, category: "Webhook")
     static let whisperkit = Logger(subsystem: subsystem, category: "WhisperKitManager")
     static let knowledgeBase = Logger(subsystem: subsystem, category: "KnowledgeBase")
+    static let interviewASR = Logger(subsystem: subsystem, category: "InterviewASR")
     static let suggestionEngine = Logger(subsystem: subsystem, category: "SuggestionEngine")
     static let sidecast = Logger(subsystem: subsystem, category: "SidecastEngine")
     static let templateStore = Logger(subsystem: subsystem, category: "TemplateStore")

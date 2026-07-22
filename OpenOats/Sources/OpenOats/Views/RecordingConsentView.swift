@@ -42,6 +42,7 @@ struct RecordingConsentView: View {
             VStack(alignment: .leading, spacing: 8) {
                 consentBullet("You are solely responsible for obtaining any required consent from all participants before recording.")
                 consentBullet("You will comply with all applicable local, state, and federal laws governing recording and wiretapping.")
+                consentBullet("For interviews, you have confirmed that the interviewer's rules permit use of a visible assistive Copilot.")
                 consentBullet("The developers of OpenOats accept no liability for unauthorized or unlawful recording.")
             }
             .padding(.horizontal, 8)

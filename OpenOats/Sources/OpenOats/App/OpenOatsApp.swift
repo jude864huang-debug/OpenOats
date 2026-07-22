@@ -6,11 +6,13 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 enum OpenOatsWindowSizing {
+    static let mainWindowFrameAutosaveName = "OpenOatsMainWindow"
     static let homeTimelinePaneMinWidth: CGFloat = 340
     static let meetingDetailPaneMinWidth: CGFloat = 700
     static let notesWorkspaceSidebarWidth: CGFloat = 250
     static let mainWindowCollapsedMinSize = CGSize(width: 520, height: 560)
     static let mainWindowExpandedMinSize = CGSize(width: 1080, height: 560)
+    static let interviewWorkspaceMinSize = CGSize(width: 860, height: 620)
     static let notesWorkspaceMinSize = CGSize(width: 980, height: 560)
 }
 
@@ -398,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let hidden = defaults.object(forKey: "hideFromScreenShare") == nil
-            ? true
+            ? false
             : defaults.bool(forKey: "hideFromScreenShare")
         let sharingType: NSWindow.SharingType = hidden ? .none : .readOnly
 
@@ -419,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ) { _ in
             Task { @MainActor in
                 let hide = self.defaults.object(forKey: "hideFromScreenShare") == nil
-                    ? true
+                    ? false
                     : self.defaults.bool(forKey: "hideFromScreenShare")
                 let type: NSWindow.SharingType = hide ? .none : .readOnly
                 for window in NSApp.windows {

@@ -12,6 +12,25 @@ enum APIKeyValidator {
         case networkError(message: String)
     }
 
+    /// Validate an OpenAI API key using a read-only models request.
+    static func validateOpenAIKey(_ key: String) async -> ValidationResult {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .invalid(message: "API key 为空") }
+        guard let url = URL(string: "https://api.openai.com/v1/models") else {
+            return .networkError(message: "Invalid URL")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 8
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return validationResult(for: response, authFailureMessage: "OpenAI API key 无效或无权访问")
+        } catch {
+            return .networkError(message: "暂时无法连接 OpenAI API")
+        }
+    }
+
     /// Validate an ElevenLabs API key by hitting the voices endpoint.
     static func validateElevenLabsKey(_ key: String) async -> ValidationResult {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)

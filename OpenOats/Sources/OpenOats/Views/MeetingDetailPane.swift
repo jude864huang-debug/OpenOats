@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 enum MeetingDetailViewMode: String, CaseIterable {
     case transcript = "Transcript"
     case notes = "Notes"
+    case aiAnswers = "AI 回答"
     case ask = "Ask"
 }
 
@@ -1139,6 +1140,8 @@ struct MeetingDetailPane<SessionFolderMenuItems: View>: View {
                     .keyboardShortcut("2", modifiers: .command)
                 Button("") { detailViewMode = .ask }
                     .keyboardShortcut("3", modifiers: .command)
+                Button("") { detailViewMode = .aiAnswers }
+                    .keyboardShortcut("4", modifiers: .command)
             }
             .frame(width: 0, height: 0)
             .opacity(0)
@@ -1515,7 +1518,7 @@ struct MeetingDetailPane<SessionFolderMenuItems: View>: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(minWidth: 120, maxWidth: 220)
+                .frame(minWidth: 220, maxWidth: 320)
                 .layoutPriority(1)
 
                 Spacer(minLength: 0)
@@ -1536,6 +1539,7 @@ struct MeetingDetailPane<SessionFolderMenuItems: View>: View {
             transcriptToolbarActions(controller: controller, state: state)
         } else if detailViewMode == .notes {
             notesToolbarActions(controller: controller, state: state)
+        } else if detailViewMode == .aiAnswers {
         } else if detailViewMode == .ask {
             askToolbarActions()
         }
@@ -2445,6 +2449,8 @@ struct MeetingDetailPane<SessionFolderMenuItems: View>: View {
                 transcriptView(controller: controller, state: state)
             case .notes:
                 notesTab(controller: controller, state: state, sessionID: sessionID)
+            case .aiAnswers:
+                interviewAIAnswersTab(state: state)
             case .ask:
                 askTab(state: state)
             }
@@ -3404,8 +3410,93 @@ struct MeetingDetailPane<SessionFolderMenuItems: View>: View {
                 return state.manualNotesDraft.isEmpty
             }
             return state.loadedNotes == nil
+        case .aiAnswers:
+            return state.loadedInterviewAnswers.isEmpty
         case .ask:
             return formattedAskConversation().isEmpty
+        }
+    }
+
+    @ViewBuilder
+    private func interviewAIAnswersTab(state: NotesState) -> some View {
+        if state.loadedInterviewAnswers.isEmpty {
+            ContentUnavailableView(
+                "暂无参考回答",
+                systemImage: "text.bubble",
+                description: Text("本场面试生成并完成校验的渐进参考回答会保留在这里；流式半成品不会留存。")
+            )
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    Label("只保留最终校验通过的参考回答", systemImage: "checkmark.shield")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(Array(state.loadedInterviewAnswers.enumerated()), id: \.element.id) { index, record in
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("问题 \(index + 1)")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Color.accentColor)
+                                Text(record.question)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+
+                            if let progressive = record.progressiveAnswer {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("核心回答")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(Color.accentColor)
+                                    Text(progressive.entry.text)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .lineSpacing(3)
+                                        .textSelection(.enabled)
+                                }
+                                Text(progressive.spine.map(\.label).joined(separator: " → "))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                ForEach(progressive.spine) { point in
+                                    if let segment = progressive.segments.first(where: { $0.pointID == point.id }) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(point.label)
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundStyle(.secondary)
+                                            Text(segment.text)
+                                                .font(.system(size: 13))
+                                                .lineSpacing(3)
+                                                .textSelection(.enabled)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+                                }
+                            } else {
+                                ForEach(Array(record.answer.segments.enumerated()), id: \.offset) { _, segment in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(segment.label)
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text(segment.text)
+                                            .font(.system(size: 13))
+                                            .lineSpacing(3)
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .background(Color.primary.opacity(0.035))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                        }
+                    }
+                }
+                .padding(18)
+            }
         }
     }
 
@@ -3641,12 +3732,32 @@ struct MeetingDetailPane<SessionFolderMenuItems: View>: View {
             }.joined(separator: "\n")
         case .notes:
             text = state.loadedTranscript.isEmpty ? state.manualNotesDraft : (state.loadedNotes?.markdown ?? "")
+        case .aiAnswers:
+            text = formattedInterviewAIAnswers(state.loadedInterviewAnswers)
         case .ask:
             text = formattedAskConversation()
         }
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func formattedInterviewAIAnswers(_ records: [InterviewHistoryAnswer]) -> String {
+        records.enumerated().map { index, record in
+            let segments: String
+            if let progressive = record.progressiveAnswer {
+                let body = progressive.spine.compactMap { point -> String? in
+                    guard let segment = progressive.segments.first(where: { $0.pointID == point.id }) else { return nil }
+                    return "### \(point.label)\n\(segment.text)"
+                }.joined(separator: "\n\n")
+                segments = "### 核心回答\n\(progressive.entry.text)\n\n\(body)"
+            } else {
+                segments = record.answer.segments.map { segment in
+                    "### \(segment.label)\n\(segment.text)"
+                }.joined(separator: "\n\n")
+            }
+            return "## 问题 \(index + 1)：\(record.question)\n\n\(segments)"
+        }.joined(separator: "\n\n")
     }
 
     private func submitAskQuestion(state: NotesState) {

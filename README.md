@@ -1,11 +1,82 @@
 # OpenOats
 
-[![Auto-Maintainer](https://am.whhite.com/badge/yazinsai/openoats)](https://am.whhite.com)
-
 A meeting note-taker that talks back.
 
+## Interview Copilot MVP
+
+This fork adds a macOS copilot for remote product and business interviews. System audio is treated
+as the interviewer and microphone audio as the candidate. It shows short answer cues first, never
+speaks for the candidate, and does not save raw audio.
+
+Main answers prefer Terra. With an OpenAI API key, the formally supported path uses the public
+Responses API. The Codex subscription and Spark path remains an experimental compatibility mode
+that requires the user to sign in locally and depends on account access. If Terra fails before a
+usable opening appears, the rest of that interview stays on Spark. **Running Details** records the
+actual model, fallback reason, and timing for each answer.
+
+### Development setup
+
+```bash
+cd worker
+npm install
+codex login
+
+cd ../OpenOats
+swift run OpenOats
+```
+
+In **Settings → Copilot**:
+
+1. Choose one role folder containing Markdown, TXT, text-based PDF, or DOCX files.
+2. Organize it into `01-resume`, `02-story-bank`, `03-job-description`, `04-company`, and
+   `05-domain`. Only the first two categories may support claims about the candidate.
+3. Configure Tencent Cloud standard realtime ASR (`16k_zh`). AppID is stored in app settings;
+   SecretID and SecretKey are kept in macOS Keychain. The installed local Qwen3-ASR 0.6B is
+   used once as a slow whole-turn fallback when Tencent fails. The standard engine is selected
+   by default so usage can be deducted from Tencent's realtime-ASR free quota; check the Tencent
+   console for the current quota and disable postpaid billing if you want a hard cost ceiling.
+4. Choose **API preferred** for low-latency OpenAI Responses API generation, or the experimental
+   **Codex Pro only** compatibility path. API keys are kept in macOS Keychain. Without a key, the
+   app can use a locally signed-in Codex subscription, subject to the account's model access.
+   **Codex compact cue** is enabled by default: it prewarms a persistent worker and sends a short
+   source brief. The cue model is editable and is passed unchanged to the local Codex CLI; Spark is
+   only the default, not a hard-coded model.
+5. Wait for the interview material package to show `Ready`, then start a session.
+
+The complete compiled package remains local. Generation requests use a configurable compact brief,
+defaulting to approximately 8k tokens, with explicit budget shares for resume, story bank, JD,
+company, and domain sources. This prevents one long document from crowding every other category out
+of the prompt and does not introduce vector retrieval.
+
+The primary turn shortcut defaults to `⌃⌥G` and is configurable. Press it once when the
+interviewer finishes, then again when the candidate finishes. `⌃⌥M` merges the previous
+interviewer segment and `⌃⌥S` stops only the current answer generation. Transcripts and generated
+cues are stored locally; raw audio is not stored. Tencent ASR and the OpenAI API are billed
+separately from ChatGPT Pro.
+
+The first response contains a direct opening, 3–5 talking points, evidence anchors, and likely
+follow-ups. If no personal example is supported by the resume or story bank, it still gives a
+professional method, decision process, trade-offs, or an explicit hypothetical answer instead of
+showing a generic “missing facts” warning. With the OpenAI API, a 45–90 second structured reference
+answer starts automatically after the fast cue; the Codex subscription path keeps that long answer
+manual so it cannot block the next question.
+Use the app only when the interview rules and applicable recording laws allow it. This fork does
+not add screen-share hiding or monitoring-evasion features.
+
+For a local app bundle, first run `npm install` in `worker/`, then:
+
+```bash
+SKIP_SIGN=1 SKIP_INSTALL=1 ./scripts/build_swift_app.sh
+```
+
+Maintainer releases are intentionally stricter than local builds. GitHub Actions installs the
+locked worker dependencies with `npm ci`, runs the worker and Swift checks, then requires a
+Developer ID Application certificate, Apple notarization credentials, and separate Sparkle
+`SPARKLE_EDDSA_KEY` / `SPARKLE_PUBLIC_ED_KEY` repository secrets. Missing runtime files or release
+credentials stop the workflow before a DMG is published; day-to-day local development is unchanged.
+
 <p align="center">
-  <a href="https://github.com/yazinsai/OpenOats/releases/latest">
+  <a href="https://github.com/jude864huang-debug/OpenOats/releases/latest">
     <img src="https://img.shields.io/badge/Download_for_Mac-DMG-black?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac" />
   </a>
 </p>
@@ -26,8 +97,8 @@ If you're looking for a hosted desktop recording API, consider checking out [Rec
 
 ## Features
 
-- **Invisible to the other side** — the app window is hidden from screen sharing by default, so no one knows you're using it
-- **Fully offline transcription** — speech recognition runs entirely on your Mac; no audio ever leaves the device
+- **Visible floating copilot** — this fork does not enable screen-share hiding or monitoring evasion
+- **Role-aware interview transcription** — only the manually selected system-audio or microphone channel is sent to Tencent realtime ASR; local Qwen is the slow failure fallback
 - **Runs 100% locally** — pair with [Ollama](https://ollama.com/) for LLM suggestions and local embeddings, and nothing touches the network at all
 - **Pick any LLM** — use [OpenRouter](https://openrouter.ai/) for cloud models (GPT-4o, Claude, Gemini) or Ollama for local ones (Llama, Qwen, Mistral)
 - **Live transcript** — see both sides of the conversation as it happens, copy the whole thing with one click
@@ -37,7 +108,7 @@ If you're looking for a hosted desktop recording API, consider checking out [Rec
 ## How it works
 
 1. You start a call and hit **Live**
-2. OpenOats transcribes both speakers locally on your Mac
+2. OpenOats captures both channels, but sends only the currently selected role to realtime ASR
 3. When the conversation hits a moment that matters — a question, a decision point, a claim worth backing up — it searches your notes and surfaces relevant talking points
 4. You sound prepared because you are
 
@@ -60,17 +131,17 @@ The app will ask you to acknowledge these obligations before your first recordin
 Install via Homebrew:
 
 ```bash
-brew tap yazinsai/openoats https://github.com/yazinsai/OpenOats
-brew install --cask yazinsai/openoats/openoats
+brew tap jude864huang-debug/openoats https://github.com/jude864huang-debug/OpenOats
+brew install --cask jude864huang-debug/openoats/openoats
 ```
 
 To upgrade later:
 
 ```bash
-brew upgrade --cask yazinsai/openoats/openoats
+brew upgrade --cask jude864huang-debug/openoats/openoats
 ```
 
-Or grab the latest DMG from the [Releases page](https://github.com/yazinsai/OpenOats/releases/latest).
+Or grab the latest DMG from the [Releases page](https://github.com/jude864huang-debug/OpenOats/releases/latest).
 
 Or build from source:
 
@@ -107,16 +178,20 @@ Works well with meeting prep docs, research notes, pitch decks, competitive anal
 
 ## Privacy
 
-- Speech is transcribed locally — audio never leaves your Mac
+- In Interview Copilot manual mode, the currently selected role's audio and hotwords are sent to Tencent Cloud ASR
+- In the experimental GPT Realtime mode, both interview audio roles are sent to OpenAI
+- Raw audio is held only in bounded memory for the current turn and is not saved to disk
 - **With Ollama**: everything stays on your machine. Zero network calls.
 - **With cloud providers**: KB chunks are sent to Voyage AI (or your chosen OpenAI-compatible endpoint) for embedding (text only, no audio), and conversation context is sent to OpenRouter for suggestions
 - API keys are stored in your Mac's Keychain
-- The app window is hidden from screen sharing by default
+- The interview Copilot does not enable screen-share hiding or monitoring-evasion behavior
 - Transcripts are saved locally to `~/Documents/OpenOats/`
 
 ### Cloud mode: what data leaves your Mac
 
-When using cloud providers, OpenOats makes the following network requests. **No audio is ever sent** — only text. In fully-local mode (Ollama for both LLM and embeddings), nothing touches the network at all.
+When using Interview Copilot, audio is sent only to the selected ASR provider as described above.
+Knowledge-package and transcript text may additionally be sent to the selected generation provider.
+The legacy knowledge-base features below have their own provider-specific network behavior.
 
 #### 1. Knowledge base indexing — Voyage AI (`api.voyageai.com/v1/embeddings`)
 

@@ -56,6 +56,24 @@ final class TranscriptionEngineTests: XCTestCase {
         XCTAssertEqual(engine.currentTranscriptionModel(), .whisperBase)
     }
 
+    func testScriptedStartClearsPauseInheritedFromPreviousSession() async {
+        let settings = makeSettings()
+        let engine = TranscriptionEngine(
+            transcriptStore: TranscriptStore(),
+            settings: settings,
+            mode: .scripted([])
+        )
+        engine.isRecordingPaused = true
+
+        await engine.start(
+            locale: Locale(identifier: "zh_CN"),
+            transcriptionModel: settings.transcriptionModel
+        )
+
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertFalse(engine.isRecordingPaused)
+    }
+
     func testMicStartupHealthRetriesFirstSilentCapture() {
         XCTAssertEqual(
             TranscriptionEngine.micStartupHealthAction(

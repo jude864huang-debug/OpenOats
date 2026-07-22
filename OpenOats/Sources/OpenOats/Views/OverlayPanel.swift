@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A floating NSPanel that is invisible to screen sharing.
+/// A floating NSPanel. Interview Copilot keeps it visible to screen sharing.
 final class OverlayPanel: NSPanel {
     init(contentRect: NSRect, defaults: UserDefaults = .standard, alwaysOnTop: Bool = true) {
         super.init(
@@ -14,7 +14,7 @@ final class OverlayPanel: NSPanel {
         isFloatingPanel = alwaysOnTop
         level = alwaysOnTop ? .floating : .normal
         let hidden = defaults.object(forKey: "hideFromScreenShare") == nil
-            ? true
+            ? false
             : defaults.bool(forKey: "hideFromScreenShare")
         sharingType = hidden ? .none : .readOnly
         isMovableByWindowBackground = true
@@ -47,9 +47,9 @@ final class OverlayManager: ObservableObject {
     var defaults: UserDefaults = .standard
 
     // Classic suggestions panel dimensions
-    private static let classicWidth: CGFloat = 250
-    private static let classicMinHeight: CGFloat = 100
-    private static let classicMaxHeight: CGFloat = 400
+    private static let classicWidth: CGFloat = 420
+    private static let classicMinHeight: CGFloat = 320
+    private static let classicMaxHeight: CGFloat = 720
 
     // Sidecast sidebar dimensions
     private static let sidecastDefaultWidth: CGFloat = 380

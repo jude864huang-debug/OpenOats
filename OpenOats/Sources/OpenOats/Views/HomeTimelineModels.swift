@@ -70,8 +70,14 @@ enum HomeTimelineGrouping {
         referenceDate: Date = Date(),
         calendar: Calendar = .current
     ) -> [HomeTimelineDayGroup] {
+        let newestSavedSessions = savedSessions
+            .sorted {
+                if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
+                return $0.id < $1.id
+            }
+            .prefix(savedSessionLimit)
         let entries = calendarEvents.map(HomeTimelineEntry.calendar)
-            + savedSessions.prefix(savedSessionLimit).map(HomeTimelineEntry.savedSession)
+            + newestSavedSessions.map(HomeTimelineEntry.savedSession)
 
         guard !entries.isEmpty else { return [] }
 
@@ -93,8 +99,15 @@ enum HomeTimelineGrouping {
     }
 
     private static func entrySort(_ lhs: HomeTimelineEntry, _ rhs: HomeTimelineEntry) -> Bool {
-        if lhs.startDate != rhs.startDate {
-            return lhs.startDate < rhs.startDate
+        switch (lhs, rhs) {
+        case (.calendar, .savedSession):
+            return true
+        case (.savedSession, .calendar):
+            return false
+        case (.calendar, .calendar):
+            if lhs.startDate != rhs.startDate { return lhs.startDate < rhs.startDate }
+        case (.savedSession, .savedSession):
+            if lhs.startDate != rhs.startDate { return lhs.startDate > rhs.startDate }
         }
         return lhs.id < rhs.id
     }

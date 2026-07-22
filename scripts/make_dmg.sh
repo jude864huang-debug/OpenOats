@@ -4,6 +4,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 APP_PATH="dist/OpenOats.app"
 DMG_PATH="dist/OpenOats.dmg"
+RELEASE_BUILD="${RELEASE_BUILD:-0}"
+
+if [[ "$RELEASE_BUILD" != "0" && "$RELEASE_BUILD" != "1" ]]; then
+  echo "Invalid RELEASE_BUILD: $RELEASE_BUILD (expected 0 or 1)"
+  exit 1
+fi
 
 if [[ ! -d "$APP_PATH" ]]; then
   echo "App not found at $APP_PATH"
@@ -78,6 +84,11 @@ if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
   fi
 fi
 
+if [[ "$RELEASE_BUILD" == "1" && "${CODESIGN_IDENTITY:-}" != Developer\ ID\ Application:* ]]; then
+  echo "Release DMGs require a Developer ID Application signing identity"
+  exit 1
+fi
+
 if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
   echo "Signing DMG with: $CODESIGN_IDENTITY"
   codesign --force --sign "$CODESIGN_IDENTITY" "$DMG_PATH"
@@ -85,7 +96,13 @@ fi
 
 echo "DMG created: $DMG_PATH"
 
-# Notarize DMG if credentials are available
+# Notarize DMG if credentials are available. Formal releases fail closed so an
+# unsigned or unnotarized artifact can never be uploaded accidentally.
+if [[ "$RELEASE_BUILD" == "1" && ( -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_APP_PASSWORD:-}" ) ]]; then
+  echo "Release DMGs require APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_PASSWORD"
+  exit 1
+fi
+
 if [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
   echo "Submitting DMG for notarization..."
 
@@ -96,5 +113,6 @@ if [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:
     --wait
 
   xcrun stapler staple "$DMG_PATH"
+  xcrun stapler validate "$DMG_PATH"
   echo "DMG notarization complete"
 fi
