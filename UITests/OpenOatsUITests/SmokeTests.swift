@@ -152,11 +152,14 @@ final class SmokeTests: XCTestCase {
         )
         XCTAssertEqual(panel.frame.maxY, originalPanelFrame.maxY, accuracy: 4)
 
-        // Repeated semantic-card switches used to synchronously resize the
-        // panel inside SwiftUI's display cycle and crash AppKit.
-        for _ in 0..<6 {
-            answer.click()
-            followUps.click()
+        // One live switch above covers the original synchronous resize crash.
+        // Reopen alternating card types to stress repeated dynamic sizing
+        // without asking XCUITest to click controls obscured by the lens panel.
+        for index in 0..<6 {
+            element(in: app, identifier: "copilot.interviewLens.close").click()
+            XCTAssertFalse(panel.waitForExistence(timeout: 2))
+            (index.isMultiple(of: 2) ? answer : followUps).click()
+            XCTAssertTrue(panel.waitForExistence(timeout: 2))
         }
         XCTAssertTrue(panel.exists)
 
