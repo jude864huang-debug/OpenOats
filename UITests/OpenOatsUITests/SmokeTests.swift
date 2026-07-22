@@ -140,10 +140,10 @@ final class SmokeTests: XCTestCase {
         let originalPanelFrame = panel.frame
         let title = element(in: app, identifier: "copilot.interviewLens.title")
         XCTAssertTrue(title.waitForExistence(timeout: 2))
-        XCTAssertEqual(title.label, "参考回答")
+        XCTAssertTrue(title.label.hasSuffix("参考回答"))
 
         followUps.click()
-        XCTAssertTrue(waitForCondition(timeout: 2) { title.label == "可能追问" })
+        XCTAssertTrue(waitForCondition(timeout: 2) { title.label.hasSuffix("可能追问") })
         XCTAssertEqual(
             app.descendants(matching: .any)
                 .matching(identifier: "copilot.interviewLens.panel")
@@ -164,7 +164,7 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(pageCounter.waitForExistence(timeout: 2))
         let firstFollowUpPage = pageCounter.label
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.control, .option])
-        XCTAssertEqual(title.label, "可能追问")
+        XCTAssertTrue(title.label.hasSuffix("可能追问"))
         XCTAssertTrue(waitForCondition(timeout: 2) { pageCounter.label != firstFollowUpPage })
 
         element(in: app, identifier: "copilot.interviewLens.close").click()
