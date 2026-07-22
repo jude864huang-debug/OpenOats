@@ -803,7 +803,7 @@ final class LiveSessionControllerTests: XCTestCase {
         var savedNotes: GeneratedNotes?
         for _ in 0..<20 {
             savedNotes = await coordinator.sessionRepository.loadNotes(sessionID: sessionID)
-            if savedNotes != nil { break }
+            if savedNotes != nil, coordinator.lastEndedSession?.hasNotes == true { break }
             try? await Task.sleep(for: .milliseconds(50))
         }
 

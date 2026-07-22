@@ -49,10 +49,9 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
         toggle.click()
-        let stop = element(in: app, identifier: "app.controlBar.stop")
-        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, accessibilityLabel: "暂停收音").waitForExistence(timeout: 5))
 
-        stop.click()
+        app.typeKey("l", modifierFlags: [.command, .shift])
         XCTAssertTrue(element(in: app, identifier: "app.sessionEndedBanner").waitForExistence(timeout: 5))
     }
 
@@ -64,7 +63,7 @@ final class SmokeTests: XCTestCase {
 
         toggle.click()
         XCTAssertTrue(
-            element(in: app, identifier: "app.controlBar.stop")
+            element(in: app, accessibilityLabel: "暂停收音")
                 .waitForExistence(timeout: 5)
         )
         let scratchpadTab = element(in: app, identifier: "app.interviewContext.scratchpadTab")
@@ -91,7 +90,7 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(systemMeter.waitForExistence(timeout: 5))
         XCTAssertTrue(hasAudibleMeterValue(micMeter))
         XCTAssertTrue(hasAudibleMeterValue(systemMeter))
-        XCTAssertTrue(element(in: app, identifier: "copilot.runDiagnostics.button").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, accessibilityLabel: "运行详情").waitForExistence(timeout: 5))
         XCTAssertTrue(element(in: app, identifier: "app.interviewContext.transcriptTab").waitForExistence(timeout: 5))
         XCTAssertTrue(element(in: app, identifier: "app.interviewContext.scratchpadTab").waitForExistence(timeout: 5))
         let mainWindow = app.windows["main"]
@@ -173,7 +172,7 @@ final class SmokeTests: XCTestCase {
         )
         element(in: app, identifier: "copilot.interviewLens.close").click()
         XCTAssertFalse(panel.waitForExistence(timeout: 2))
-        XCTAssertTrue(element(in: app, identifier: "copilot.runDiagnostics.button").exists)
+        XCTAssertTrue(element(in: app, accessibilityLabel: "运行详情").exists)
     }
 
     func testSessionSmokeRoutesGenerateNotesIntoMainWindowDetail() {
@@ -183,10 +182,9 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
         toggle.click()
-        let stop = element(in: app, identifier: "app.controlBar.stop")
-        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, accessibilityLabel: "暂停收音").waitForExistence(timeout: 5))
 
-        stop.click()
+        app.typeKey("l", modifierFlags: [.command, .shift])
         let generateNotes = element(in: app, identifier: "app.generateNotesButton")
         XCTAssertTrue(generateNotes.waitForExistence(timeout: 5))
         generateNotes.click()
