@@ -83,6 +83,30 @@ final class LiveSessionControllerTests: XCTestCase {
         return (controller, coordinator)
     }
 
+    private func installViewServices(
+        in coordinator: AppCoordinator,
+        root: URL,
+        notesDirectory: URL,
+        settings: AppSettings
+    ) {
+        let suiteName = "com.openoats.tests.viewservices.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+        defaults.removePersistentDomain(forName: suiteName)
+        let container = AppContainer(
+            mode: .live,
+            defaults: defaults,
+            appSupportDirectory: root,
+            notesDirectory: notesDirectory
+        )
+        let services = container.makeViewServices(settings: settings, coordinator: coordinator)
+        coordinator.setViewServices(
+            knowledgeBase: services.knowledgeBase,
+            suggestionEngine: services.suggestionEngine,
+            sidecastEngine: services.sidecastEngine,
+            customerCopilotEngine: services.customerCopilotEngine
+        )
+    }
+
     private func makeLiveController(
         root: URL,
         notesDirectory: URL,
@@ -590,19 +614,11 @@ final class LiveSessionControllerTests: XCTestCase {
             settings: settings,
             scripted: [Utterance(text: "Hello", speaker: .you)]
         )
-        let knowledgeBase = KnowledgeBase(settings: settings)
-        coordinator.setViewServices(
-            knowledgeBase: knowledgeBase,
-            suggestionEngine: SuggestionEngine(
-                transcriptStore: coordinator.transcriptStore,
-                knowledgeBase: knowledgeBase,
-                settings: settings
-            ),
-            sidecastEngine: SidecastEngine(
-                transcriptStore: coordinator.transcriptStore,
-                knowledgeBase: knowledgeBase,
-                settings: settings
-            )
+        installViewServices(
+            in: coordinator,
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
         )
 
         let event = CalendarEvent(
@@ -1590,19 +1606,11 @@ final class LiveSessionControllerTests: XCTestCase {
             notesDirectory: dirs.notes,
             settings: settings
         )
-        let knowledgeBase = KnowledgeBase(settings: settings)
-        coordinator.setViewServices(
-            knowledgeBase: knowledgeBase,
-            suggestionEngine: SuggestionEngine(
-                transcriptStore: coordinator.transcriptStore,
-                knowledgeBase: knowledgeBase,
-                settings: settings
-            ),
-            sidecastEngine: SidecastEngine(
-                transcriptStore: coordinator.transcriptStore,
-                knowledgeBase: knowledgeBase,
-                settings: settings
-            )
+        installViewServices(
+            in: coordinator,
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
         )
 
         let task = Task {

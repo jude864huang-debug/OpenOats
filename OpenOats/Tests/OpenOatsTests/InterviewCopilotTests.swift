@@ -1,6 +1,7 @@
 import XCTest
 @testable import OpenOatsKit
 
+@MainActor
 final class InterviewCopilotTests: XCTestCase {
     func testQuestionClassifierCoversProductBusinessInterviewShapes() {
         XCTAssertEqual(InterviewQuestionClassifier.classify("请先做一个自我介绍"), .selfIntroduction)

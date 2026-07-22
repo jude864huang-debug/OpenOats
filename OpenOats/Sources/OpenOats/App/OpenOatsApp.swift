@@ -594,17 +594,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let coordinator, let settings else { return }
         guard settings.hasAcknowledgedRecordingConsent else { return }
 
-        container?.ensureMeetingServicesInitialized(settings: settings, coordinator: coordinator)
-
         if coordinator.isRecording {
-            coordinator.handle(.userStopped, settings: settings)
+            if let controller = coordinator.liveSessionController {
+                controller.stopSession(settings: settings)
+            } else {
+                coordinator.queueExternalCommand(.stopSession)
+            }
         } else {
             let calEvent = settings.calendarIntegrationEnabled
                 ? container?.calendarManager?.currentEvent(
                     excludingCalendarIDs: settings.excludedCalendarIDs
                 )
                 : nil
-            coordinator.handle(.userStarted(.manual(calendarEvent: calEvent)), settings: settings)
+            if let controller = coordinator.liveSessionController {
+                controller.startSession(settings: settings, calendarEventOverride: calEvent)
+            } else {
+                // The menu command can arrive while SwiftUI is still creating the
+                // controller. Queue it instead of transitioning the coordinator
+                // without a controller available to perform the start side effects.
+                coordinator.queueExternalCommand(.startSession(calendarEvent: calEvent))
+            }
         }
     }
 

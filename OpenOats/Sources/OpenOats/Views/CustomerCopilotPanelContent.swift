@@ -1508,7 +1508,6 @@ struct InterviewWorkspaceHeader: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-        .accessibilityIdentifier("copilot.interviewWorkspace.header")
         .background(.regularMaterial)
         .overlay(alignment: .topTrailing) {
             if showsDiagnostics {
@@ -1531,6 +1530,8 @@ struct InterviewWorkspaceHeader: View {
             return .handled
         }
         .onDisappear { diagnosticsDismissTask?.cancel() }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("copilot.interviewWorkspace.header")
     }
 
     private var diagnosticsControl: some View {

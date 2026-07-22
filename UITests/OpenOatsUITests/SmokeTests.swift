@@ -63,6 +63,10 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
         app.typeKey("l", modifierFlags: [.command, .shift])
+        XCTAssertTrue(
+            element(in: app, identifier: "app.controlBar.stop")
+                .waitForExistence(timeout: 5)
+        )
         let scratchpadTab = element(in: app, identifier: "app.interviewContext.scratchpadTab")
         XCTAssertTrue(scratchpadTab.waitForExistence(timeout: 5))
         scratchpadTab.click()
