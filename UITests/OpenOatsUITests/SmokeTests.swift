@@ -138,10 +138,12 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(waitForCondition(timeout: 2) { fontScale.label != originalFontScale })
 
         let originalPanelFrame = panel.frame
-        XCTAssertTrue(element(in: app, accessibilityLabel: "参考回答").waitForExistence(timeout: 2))
+        let title = element(in: app, identifier: "copilot.interviewLens.title")
+        XCTAssertTrue(title.waitForExistence(timeout: 2))
+        XCTAssertEqual(title.label, "参考回答")
 
         followUps.click()
-        XCTAssertTrue(element(in: app, accessibilityLabel: "可能追问").waitForExistence(timeout: 2))
+        XCTAssertTrue(waitForCondition(timeout: 2) { title.label == "可能追问" })
         XCTAssertEqual(
             app.descendants(matching: .any)
                 .matching(identifier: "copilot.interviewLens.panel")
@@ -158,10 +160,11 @@ final class SmokeTests: XCTestCase {
         }
         XCTAssertTrue(panel.exists)
 
-        let pageCounter = element(in: app, accessibilityLabelPrefix: "第 ")
+        let pageCounter = element(in: app, identifier: "copilot.interviewLens.pageCounter")
+        XCTAssertTrue(pageCounter.waitForExistence(timeout: 2))
         let firstFollowUpPage = pageCounter.label
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.control, .option])
-        XCTAssertTrue(element(in: app, accessibilityLabel: "可能追问").exists)
+        XCTAssertEqual(title.label, "可能追问")
         XCTAssertTrue(waitForCondition(timeout: 2) { pageCounter.label != firstFollowUpPage })
 
         element(in: app, identifier: "copilot.interviewLens.close").click()
@@ -298,12 +301,6 @@ final class SmokeTests: XCTestCase {
     private func element(in app: XCUIApplication, accessibilityLabel: String) -> XCUIElement {
         app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", accessibilityLabel)
-        ).firstMatch
-    }
-
-    private func element(in app: XCUIApplication, accessibilityLabelPrefix: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(
-            NSPredicate(format: "label BEGINSWITH %@", accessibilityLabelPrefix)
         ).firstMatch
     }
 

@@ -665,6 +665,8 @@ private struct InterviewLensCardView: View {
                     Text(manager.displayTitle)
                         .font(.system(size: 14, weight: .bold))
                         .lineLimit(1)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(manager.displayTitle)
                         .accessibilityIdentifier("copilot.interviewLens.title")
                     if let status = statusLabel {
                         Label(status.text, systemImage: status.icon)
@@ -826,6 +828,7 @@ private struct InterviewLensCardView: View {
                 .font(.system(size: 10, design: .monospaced).weight(.medium))
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 42)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(pageCounterAccessibilityLabel)
                 .accessibilityIdentifier("copilot.interviewLens.pageCounter")
 
