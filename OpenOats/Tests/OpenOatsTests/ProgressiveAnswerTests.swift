@@ -62,8 +62,10 @@ final class ProgressiveAnswerTests: XCTestCase {
         let format = try XCTUnwrap(text["format"] as? [String: Any])
         let decodedSchema = try XCTUnwrap(format["schema"] as? [String: Any])
         XCTAssertEqual(decodedSchema["type"] as? String, "object")
-        let propertiesMarker = try XCTUnwrap(body.range(of: #""properties":{"entry""#))
-        let orderedBody = body[propertiesMarker.lowerBound...]
+        let orderedSchema = OpenAIResponsesProvider.progressiveAnswerOutputSchemaJSON
+        XCTAssertTrue(body.contains(orderedSchema))
+        let propertiesMarker = try XCTUnwrap(orderedSchema.range(of: #""properties":{"#))
+        let orderedBody = orderedSchema[propertiesMarker.upperBound...]
         let keys = ["entry", "spine", "segments", "closing", "metadata"]
         let positions = try keys.map { key in
             try XCTUnwrap(orderedBody.range(of: "\"\(key)\":" )?.lowerBound)

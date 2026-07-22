@@ -679,7 +679,8 @@ struct ContentView: View {
             $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID
         }) else { return }
 
-        if window.frameAutosaveName != OpenOatsWindowSizing.mainWindowFrameAutosaveName {
+        if case .live = container.mode,
+           window.frameAutosaveName != OpenOatsWindowSizing.mainWindowFrameAutosaveName {
             _ = window.setFrameUsingName(OpenOatsWindowSizing.mainWindowFrameAutosaveName)
             _ = window.setFrameAutosaveName(OpenOatsWindowSizing.mainWindowFrameAutosaveName)
         }
@@ -699,23 +700,30 @@ struct ContentView: View {
             ? OpenOatsWindowSizing.interviewWorkspaceMinSize
             : OpenOatsWindowSizing.mainWindowCollapsedMinSize
         window.contentMinSize = minimumSize
-        guard isRunning else { return }
 
         let currentFrame = window.frame
         let newWidth = max(currentFrame.width, minimumSize.width)
         let newHeight = max(currentFrame.height, minimumSize.height)
-        guard newWidth != currentFrame.width || newHeight != currentFrame.height else { return }
 
         var frame = currentFrame
-        frame.origin.x -= max(0, newWidth - currentFrame.width)
+        if isRunning {
+            frame.origin.x -= max(0, newWidth - currentFrame.width)
+        }
         frame.size.width = newWidth
         frame.size.height = newHeight
-        if let visibleFrame = window.screen?.visibleFrame {
-            frame = frame.intersection(visibleFrame)
+
+        if let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
             frame.size.width = min(max(frame.width, minimumSize.width), visibleFrame.width)
             frame.size.height = min(max(frame.height, minimumSize.height), visibleFrame.height)
+            let maximumX = max(visibleFrame.minX, visibleFrame.maxX - frame.width)
+            let maximumY = max(visibleFrame.minY, visibleFrame.maxY - frame.height)
+            frame.origin.x = min(max(frame.minX, visibleFrame.minX), maximumX)
+            frame.origin.y = min(max(frame.minY, visibleFrame.minY), maximumY)
         }
-        window.setFrame(frame, display: true, animate: true)
+
+        guard frame != currentFrame else { return }
+        let shouldAnimate: Bool = if case .live = container.mode { true } else { false }
+        window.setFrame(frame, display: true, animate: shouldAnimate)
     }
 
     private func copyTranscript() {

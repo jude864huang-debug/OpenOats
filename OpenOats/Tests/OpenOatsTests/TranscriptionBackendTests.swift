@@ -21,8 +21,13 @@ final class TranscriptionBackendTests: XCTestCase {
         switch status {
         case .ready, .needsDownload:
             break
+        case .error(let reason):
+            XCTAssertTrue(
+                reason.contains("mlx-qwen3-asr"),
+                "Missing runtime errors must identify the required executable: \(reason)"
+            )
         default:
-            XCTFail("Expected .ready or .needsDownload, got \(status)")
+            XCTFail("Unexpected Qwen status: \(status)")
         }
     }
 
