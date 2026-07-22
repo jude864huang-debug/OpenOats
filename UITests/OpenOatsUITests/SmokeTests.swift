@@ -70,7 +70,7 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(scratchpadTab.waitForExistence(timeout: 5))
         scratchpadTab.click()
         XCTAssertTrue(element(in: app, identifier: "app.scratchpadEditor").waitForExistence(timeout: 5))
-        XCTAssertTrue(element(in: app, identifier: "copilot.actionBar").exists)
+        XCTAssertTrue(element(in: app, accessibilityLabel: "暂停收音").exists)
     }
 
     func testInterviewLensSmokeUsesOnePanelAndKeepsMainBlocksStable() {
@@ -94,14 +94,14 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "app.interviewContext.transcriptTab").waitForExistence(timeout: 5))
         XCTAssertTrue(element(in: app, identifier: "app.interviewContext.scratchpadTab").waitForExistence(timeout: 5))
         let mainWindow = app.windows["main"]
-        let commitTurn = element(in: app, identifier: "copilot.turn.commit")
+        let pauseCapture = element(in: app, accessibilityLabel: "暂停收音")
         let transcriptScrollView = element(in: app, identifier: "transcript.scrollView")
         XCTAssertTrue(mainWindow.waitForExistence(timeout: 5))
-        XCTAssertTrue(commitTurn.waitForExistence(timeout: 5))
+        XCTAssertTrue(pauseCapture.waitForExistence(timeout: 5))
         XCTAssertTrue(transcriptScrollView.waitForExistence(timeout: 5))
-        XCTAssertTrue(mainWindow.frame.contains(commitTurn.frame))
+        XCTAssertTrue(mainWindow.frame.contains(pauseCapture.frame))
         XCTAssertTrue(mainWindow.frame.contains(transcriptScrollView.frame))
-        XCTAssertTrue(element(in: app, identifier: "copilot.audio.pauseToggle").exists)
+        XCTAssertTrue(pauseCapture.exists)
         XCTAssertFalse(element(in: app, identifier: "copilot.audio.muteToggle").exists)
         XCTAssertFalse(element(in: app, identifier: "copilot.generation.stop").exists)
         for number in 1...3 {
