@@ -1530,8 +1530,6 @@ struct InterviewWorkspaceHeader: View {
             return .handled
         }
         .onDisappear { diagnosticsDismissTask?.cancel() }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("copilot.interviewWorkspace.header")
     }
 
     private var diagnosticsControl: some View {

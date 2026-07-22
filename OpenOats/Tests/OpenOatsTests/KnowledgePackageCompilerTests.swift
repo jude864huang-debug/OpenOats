@@ -149,6 +149,7 @@ final class KnowledgePackageCompilerTests: XCTestCase {
         return url
     }
 
+    @MainActor
     private func makePDF(text: String, at url: URL) throws {
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 700))
         textView.string = text

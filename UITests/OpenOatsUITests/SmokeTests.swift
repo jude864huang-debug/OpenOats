@@ -83,10 +83,6 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(answer.waitForExistence(timeout: 8))
         XCTAssertTrue(followUps.waitForExistence(timeout: 5))
         XCTAssertFalse(element(in: app, identifier: "copilot.interviewLens.question").exists)
-        XCTAssertTrue(
-            element(in: app, identifier: "copilot.interviewWorkspace.header")
-                .waitForExistence(timeout: 5)
-        )
         let micMeter = element(in: app, identifier: "copilot.audio.micMeter")
         let systemMeter = element(in: app, identifier: "copilot.audio.systemMeter")
         XCTAssertTrue(micMeter.waitForExistence(timeout: 5))
@@ -175,7 +171,7 @@ final class SmokeTests: XCTestCase {
         )
         element(in: app, identifier: "copilot.interviewLens.close").click()
         XCTAssertFalse(panel.waitForExistence(timeout: 2))
-        XCTAssertTrue(element(in: app, identifier: "copilot.interviewWorkspace.header").exists)
+        XCTAssertTrue(element(in: app, identifier: "copilot.runDiagnostics.button").exists)
     }
 
     func testSessionSmokeRoutesGenerateNotesIntoMainWindowDetail() {

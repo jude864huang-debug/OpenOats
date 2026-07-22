@@ -477,10 +477,9 @@ struct ContentView: View {
                 hasCompletedOnboarding = true
             }
 
-            prepareInterviewWorkspace()
-            interviewLensManager.configure(settings: settings, defaults: container.defaults)
-
-            // Create and wire the controller
+            // Make session actions available before initializing the heavier
+            // Copilot workspace and history stores. A launch-time shortcut can
+            // otherwise sit queued for several seconds while those services load.
             let controller = LiveSessionController(coordinator: coordinator, container: container)
             controller.onRunningStateChanged = { [weak miniBarManager, weak interviewLensManager] isRunning in
                 if isRunning {
@@ -513,6 +512,9 @@ struct ContentView: View {
             coordinator.liveSessionController = controller
             liveSessionController = controller
             configureMainWindowForInterview(controller.state.isRunning)
+
+            prepareInterviewWorkspace()
+            interviewLensManager.configure(settings: settings, defaults: container.defaults)
 
             copilotHotkeyManager.configure(primaryShortcut: settings.copilotTurnHotkey)
             copilotHotkeyManager.onCommitTurn = { coordinator.customerCopilotEngine?.commitActiveInterviewTurn() }
