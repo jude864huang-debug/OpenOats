@@ -131,10 +131,11 @@ final class SmokeTests: XCTestCase {
         XCTAssertEqual(answer.frame.width, originalAnswerFrame.width, accuracy: 2)
         XCTAssertEqual(answer.frame.height, originalAnswerFrame.height, accuracy: 2)
 
-        let fontScale = element(in: app, accessibilityLabelPrefix: "镜头卡字号 ")
-        let originalFontScale = fontScale.label
+        let fontScale = element(in: app, identifier: "copilot.interviewLens.fontScale")
+        XCTAssertTrue(fontScale.waitForExistence(timeout: 2))
+        let originalFontScale = fontScale.value as? String
         element(in: app, identifier: "copilot.interviewLens.fontIncrease").click()
-        XCTAssertTrue(waitForCondition(timeout: 2) { fontScale.label != originalFontScale })
+        XCTAssertTrue(waitForCondition(timeout: 2) { fontScale.value as? String != originalFontScale })
 
         let originalPanelFrame = panel.frame
         XCTAssertTrue(element(in: app, accessibilityLabel: "参考回答").waitForExistence(timeout: 2))
@@ -169,7 +170,7 @@ final class SmokeTests: XCTestCase {
         answer.click()
         XCTAssertTrue(panel.waitForExistence(timeout: 5))
         XCTAssertNotEqual(
-            element(in: app, accessibilityLabelPrefix: "镜头卡字号 ").label,
+            element(in: app, identifier: "copilot.interviewLens.fontScale").value as? String,
             originalFontScale
         )
         element(in: app, identifier: "copilot.interviewLens.close").click()

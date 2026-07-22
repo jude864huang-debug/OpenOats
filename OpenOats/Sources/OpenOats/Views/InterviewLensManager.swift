@@ -693,7 +693,9 @@ private struct InterviewLensCardView: View {
                 .font(.system(size: 10, design: .monospaced).weight(.medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 36)
-                .accessibilityLabel("镜头卡字号 \(fontScale.rawValue)%")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("镜头卡字号")
+                .accessibilityValue("\(fontScale.rawValue)%")
                 .accessibilityIdentifier("copilot.interviewLens.fontScale")
 
             Button(action: manager.increaseFontScale) {
