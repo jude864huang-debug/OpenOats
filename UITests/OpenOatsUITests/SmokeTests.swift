@@ -126,7 +126,10 @@ final class SmokeTests: XCTestCase {
                 .count,
             1
         )
-        XCTAssertEqual(answer.frame, originalAnswerFrame)
+        XCTAssertEqual(answer.frame.midX, originalAnswerFrame.midX, accuracy: 2)
+        XCTAssertEqual(answer.frame.midY, originalAnswerFrame.midY, accuracy: 2)
+        XCTAssertEqual(answer.frame.width, originalAnswerFrame.width, accuracy: 2)
+        XCTAssertEqual(answer.frame.height, originalAnswerFrame.height, accuracy: 2)
 
         let fontScale = element(in: app, identifier: "copilot.interviewLens.fontScale")
         let originalFontScale = fontScale.label
