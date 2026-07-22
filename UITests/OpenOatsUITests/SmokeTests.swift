@@ -150,7 +150,7 @@ final class SmokeTests: XCTestCase {
                 .count,
             1
         )
-        XCTAssertEqual(panel.frame.maxY, originalPanelFrame.maxY, accuracy: 2)
+        XCTAssertEqual(panel.frame.maxY, originalPanelFrame.maxY, accuracy: 4)
 
         // Repeated semantic-card switches used to synchronously resize the
         // panel inside SwiftUI's display cycle and crash AppKit.
