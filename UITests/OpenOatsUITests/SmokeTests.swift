@@ -166,7 +166,7 @@ final class SmokeTests: XCTestCase {
         let pageCounter = element(in: app, identifier: "copilot.interviewLens.pageCounter")
         XCTAssertTrue(pageCounter.waitForExistence(timeout: 2))
         let firstFollowUpPage = pageCounter.label
-        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.control, .option])
+        app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [])
         XCTAssertTrue(title.label.hasSuffix("可能追问"))
         XCTAssertTrue(waitForCondition(timeout: 2) { pageCounter.label != firstFollowUpPage })
 
