@@ -35,7 +35,11 @@ final class LiveSessionControllerTests: XCTestCase {
             defaultNotesDirectory: notesDirectory,
             runMigrations: false
         )
-        return AppSettings(storage: storage)
+        let settings = AppSettings(storage: storage)
+        settings.tencentASRAppID = "ui-test-app"
+        settings.tencentASRSecretID = "ui-test-secret-id"
+        settings.tencentASRSecretKey = "ui-test-secret-key"
+        return settings
     }
 
     private func makePNGData() -> Data {
@@ -132,6 +136,24 @@ final class LiveSessionControllerTests: XCTestCase {
     }
 
     // MARK: - Tests
+
+    func testLiveManualASRRequiresTencentCredentials() {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        settings.tencentASRAppID = ""
+        settings.tencentASRSecretID = ""
+        settings.tencentASRSecretKey = ""
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        controller.startSession(settings: settings)
+
+        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertEqual(controller.state.statusMessage, "Tencent ASR setup required")
+    }
 
     func testStartSessionTransitionsStateToRecordingSynchronously() {
         let dirs = makeTempDirs()

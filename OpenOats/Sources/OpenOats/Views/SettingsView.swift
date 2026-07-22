@@ -325,6 +325,7 @@ private struct CopilotSettingsTab: View {
                         Text(value.label).tag(value)
                     }
                 }
+                .accessibilityIdentifier("settings.copilot.inferenceProviderPicker")
                 TextField("主回答模型", text: $settings.interviewMainAnswerModel)
                     .accessibilityHint("用于生成唯一的渐进参考回答；模型名会原样传给 OpenAI API 或本机 Codex CLI")
                 Text("默认 \(SettingsStore.defaultInterviewMainAnswerModel)。同一次请求会依次提交可开口句、逻辑锚点和专业展开，不再并行展示两套答案。")

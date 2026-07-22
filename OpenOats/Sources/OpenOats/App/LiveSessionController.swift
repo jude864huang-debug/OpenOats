@@ -367,7 +367,8 @@ final class LiveSessionController {
         coordinator.customerCopilotEngine?.reconfigureInterviewAudioMode()
         let usesDedicatedInterviewAudio = coordinator.customerCopilotEngine != nil
 
-        if settings.interviewAudioMode == .manualStreamingASR,
+        if case .live = container.mode,
+           settings.interviewAudioMode == .manualStreamingASR,
            !settings.hasTencentASRCredentials {
             state.errorMessage = "请先在设置 → Copilot → 面试 ASR 中填写腾讯云 AppID、SecretID 和 SecretKey。"
             state.statusMessage = "Tencent ASR setup required"

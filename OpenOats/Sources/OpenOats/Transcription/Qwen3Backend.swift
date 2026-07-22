@@ -130,7 +130,11 @@ final class Qwen3Backend: TranscriptionBackend, @unchecked Sendable {
         onStatus("Local MLX Qwen3 ASR ready")
     }
 
-    func transcribe(_ samples: [Float], locale: Locale, previousContext: String?) async throws -> String {
+    func transcribe(
+        _ samples: [Float],
+        locale: Locale,
+        previousContext: String? = nil
+    ) async throws -> String {
         guard preparedLock.withLock({ isPrepared }) else {
             throw TranscriptionBackendError.notPrepared
         }

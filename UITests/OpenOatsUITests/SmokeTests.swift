@@ -14,7 +14,7 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "app.notesWorkspaceButton").waitForExistence(timeout: 5))
     }
 
-    func testSettingsSmokeShowsCorePickers() {
+    func testSettingsSmokeShowsCopilotAndTranscriptionPickers() {
         let app = launchApp(scenario: "launchSmoke")
         app.activate()
         app.typeKey(",", modifierFlags: .command)
@@ -23,19 +23,23 @@ final class SmokeTests: XCTestCase {
         let tabView = element(in: app, identifier: "settings.tabView")
         XCTAssertTrue(tabView.waitForExistence(timeout: 5))
 
-        // Navigate to Intelligence tab and verify LLM picker
-        app.toolbars.buttons["Intelligence"].click()
-        XCTAssertTrue(element(in: app, identifier: "settings.llmProviderPicker").waitForExistence(timeout: 5))
+        // Interview Copilot is the primary generation surface in this fork.
+        app.toolbars.buttons["Copilot"].click()
+        XCTAssertTrue(
+            element(in: app, identifier: "settings.copilot.inferenceProviderPicker")
+                .waitForExistence(timeout: 5)
+        )
 
         // Navigate to Transcription tab and verify model picker
         app.toolbars.buttons["Transcription"].click()
         XCTAssertTrue(element(in: app, identifier: "settings.transcriptionModelPicker").waitForExistence(timeout: 5))
     }
 
-    func testFirstLaunchShowsSetupWizard() {
+    func testFirstLaunchEntersMainWorkspaceWithoutLegacyProviderWizard() {
         let app = launchApp(scenario: "wizardSmoke")
 
-        XCTAssertTrue(element(in: app, identifier: "wizard.root").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(in: app, identifier: "app.controlBar.toggle").waitForExistence(timeout: 5))
+        XCTAssertFalse(element(in: app, identifier: "wizard.root").exists)
     }
 
     func testSessionSmokeShowsEndedBanner() {
@@ -75,7 +79,10 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(answer.waitForExistence(timeout: 8))
         XCTAssertTrue(followUps.waitForExistence(timeout: 5))
         XCTAssertFalse(element(in: app, identifier: "copilot.interviewLens.question").exists)
-        XCTAssertTrue(element(in: app, identifier: "copilot.interviewLens.header").waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            element(in: app, identifier: "copilot.interviewWorkspace.header")
+                .waitForExistence(timeout: 5)
+        )
         let micMeter = element(in: app, identifier: "copilot.audio.micMeter")
         let systemMeter = element(in: app, identifier: "copilot.audio.systemMeter")
         XCTAssertTrue(micMeter.waitForExistence(timeout: 5))
@@ -164,7 +171,7 @@ final class SmokeTests: XCTestCase {
         )
         element(in: app, identifier: "copilot.interviewLens.close").click()
         XCTAssertFalse(panel.waitForExistence(timeout: 2))
-        XCTAssertTrue(element(in: app, identifier: "copilot.interviewLens.header").exists)
+        XCTAssertTrue(element(in: app, identifier: "copilot.interviewWorkspace.header").exists)
     }
 
     func testSessionSmokeRoutesGenerateNotesIntoMainWindowDetail() {
