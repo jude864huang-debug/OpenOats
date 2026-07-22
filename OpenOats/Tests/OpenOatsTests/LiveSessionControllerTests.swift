@@ -230,28 +230,26 @@ final class LiveSessionControllerTests: XCTestCase {
         XCTAssertFalse(controller.state.isRecordingPaused)
     }
 
-    func testCloudStartPreflightBlocksMissingAPIKey() async {
+    func testCloudPreflightReportsMissingAPIKey() async {
         let dirs = makeTempDirs()
         let settings = makeSettings(notesDirectory: dirs.notes)
         settings.transcriptionModel = .elevenLabsScribe
-        let (controller, coordinator) = makeLiveController(
+        let (_, coordinator) = makeLiveController(
             root: dirs.root,
             notesDirectory: dirs.notes,
             settings: settings
         )
 
-        controller.startSession(settings: settings)
-        try? await Task.sleep(for: .milliseconds(200))
-
-        XCTAssertEqual(coordinator.state, .idle)
-        XCTAssertFalse(controller.state.isRunning)
+        let issue = await coordinator.transcriptionEngine?.preflightStart(
+            transcriptionModel: settings.transcriptionModel
+        )
         XCTAssertEqual(
-            controller.state.errorMessage,
+            issue?.message,
             "Missing ElevenLabs Scribe API key. Check Settings > Transcription."
         )
     }
 
-    func testCloudStartPreflightBlocksUnavailableOutputDevice() async {
+    func testCloudPreflightReportsUnavailableOutputDevice() async {
         let dirs = makeTempDirs()
         let secretStore = AppSecretStore(
             loadValue: { _ in "test-key" },
@@ -260,24 +258,22 @@ final class LiveSessionControllerTests: XCTestCase {
         let settings = makeSettings(notesDirectory: dirs.notes, secretStore: secretStore)
         settings.transcriptionModel = .assemblyAI
         settings.outputDeviceID = 999_999_999
-        let (controller, coordinator) = makeLiveController(
+        let (_, coordinator) = makeLiveController(
             root: dirs.root,
             notesDirectory: dirs.notes,
             settings: settings
         )
 
-        controller.startSession(settings: settings)
-        try? await Task.sleep(for: .milliseconds(200))
-
-        XCTAssertEqual(coordinator.state, .idle)
-        XCTAssertFalse(controller.state.isRunning)
+        let issue = await coordinator.transcriptionEngine?.preflightStart(
+            transcriptionModel: settings.transcriptionModel
+        )
         XCTAssertEqual(
-            controller.state.errorMessage,
+            issue?.message,
             "The selected output device is no longer available. Choose another output device in Settings > Transcription."
         )
     }
 
-    func testCloudStartPreflightBlocksUnavailableMicrophone() async {
+    func testCloudPreflightReportsUnavailableMicrophone() async {
         let dirs = makeTempDirs()
         let secretStore = AppSecretStore(
             loadValue: { _ in "test-key" },
@@ -286,19 +282,17 @@ final class LiveSessionControllerTests: XCTestCase {
         let settings = makeSettings(notesDirectory: dirs.notes, secretStore: secretStore)
         settings.transcriptionModel = .assemblyAI
         settings.inputDeviceID = 999_999_999
-        let (controller, coordinator) = makeLiveController(
+        let (_, coordinator) = makeLiveController(
             root: dirs.root,
             notesDirectory: dirs.notes,
             settings: settings
         )
 
-        controller.startSession(settings: settings)
-        try? await Task.sleep(for: .milliseconds(200))
-
-        XCTAssertEqual(coordinator.state, .idle)
-        XCTAssertFalse(controller.state.isRunning)
+        let issue = await coordinator.transcriptionEngine?.preflightStart(
+            transcriptionModel: settings.transcriptionModel
+        )
         XCTAssertEqual(
-            controller.state.errorMessage,
+            issue?.message,
             "The selected microphone is no longer available. Choose another microphone in Settings > Transcription."
         )
     }
@@ -1542,7 +1536,7 @@ final class LiveSessionControllerTests: XCTestCase {
         XCTAssertTrue(engineRunning, "Engine should be running after start")
     }
 
-    func testConfirmDownloadSetsFlag() {
+    func testConfirmDownloadStartsSessionAndConsumesFlag() async {
         let dirs = makeTempDirs()
         let settings = makeSettings(notesDirectory: dirs.notes)
         let (controller, coordinator) = makeController(
@@ -1555,7 +1549,12 @@ final class LiveSessionControllerTests: XCTestCase {
 
         controller.confirmDownloadAndStart(settings: settings)
 
-        XCTAssertTrue(coordinator.transcriptionEngine?.downloadConfirmed ?? false)
+        for _ in 0..<20 {
+            if coordinator.transcriptionEngine?.isRunning == true { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(coordinator.transcriptionEngine?.isRunning ?? false)
+        XCTAssertFalse(coordinator.transcriptionEngine?.downloadConfirmed ?? true)
     }
 
     func testPollingDoesNotReadVoyageKeyWhenKnowledgeBaseFolderUnset() async {

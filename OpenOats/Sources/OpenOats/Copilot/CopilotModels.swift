@@ -533,7 +533,7 @@ enum InterviewQuestionClassifier {
         if matches(value, ["举个例子", "冲突", "失败", "压力", "领导力", "协作", "tell me about a time", "behavioral"]) { return .behavioral }
         if matches(value, ["这个项目", "项目中", "你负责", "项目经历", "walk me through this project", "your role in"]) { return .projectDeepDive }
         if matches(value, ["设计一个", "产品方案", "用户需求", "优先级", "product case", "improve this product"]) { return .productCase }
-        if matches(value, ["商业模式", "增长", "收入", "市场", "业务分析", "business case", "market size"]) { return .businessAnalysis }
+        if matches(value, ["商业模式", "增长", "收入", "市场", "业务分析", "business case", "market size", "size this market", "market sizing"]) { return .businessAnalysis }
         if matches(value, ["具体一点", "为什么", "后来呢", "怎么衡量", "你本人", "如果重来", "why exactly", "how did you measure"]) { return .followUp }
         if value.contains("?") || value.contains("？") { return .professionalKnowledge }
         return .other

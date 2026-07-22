@@ -619,11 +619,19 @@ struct ContentView: View {
             }
             return
         }
-        liveSessionController?.startSession(settings: settings)
+        guard let liveSessionController else {
+            coordinator.queueExternalCommand(.startSession())
+            return
+        }
+        liveSessionController.startSession(settings: settings)
     }
 
     private func stopSession() {
-        liveSessionController?.stopSession(settings: settings)
+        guard let liveSessionController else {
+            coordinator.queueExternalCommand(.stopSession)
+            return
+        }
+        liveSessionController.stopSession(settings: settings)
     }
 
     private func openSettingsWindow() {

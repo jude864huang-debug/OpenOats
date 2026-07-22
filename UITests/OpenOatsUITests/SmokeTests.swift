@@ -48,11 +48,11 @@ final class SmokeTests: XCTestCase {
         let toggle = element(in: app, identifier: "app.controlBar.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
-        app.typeKey("l", modifierFlags: [.command, .shift])
+        toggle.click()
         let stop = element(in: app, identifier: "app.controlBar.stop")
         XCTAssertTrue(stop.waitForExistence(timeout: 5))
 
-        app.typeKey("l", modifierFlags: [.command, .shift])
+        stop.click()
         XCTAssertTrue(element(in: app, identifier: "app.sessionEndedBanner").waitForExistence(timeout: 5))
     }
 
@@ -62,7 +62,7 @@ final class SmokeTests: XCTestCase {
         let toggle = element(in: app, identifier: "app.controlBar.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
-        app.typeKey("l", modifierFlags: [.command, .shift])
+        toggle.click()
         XCTAssertTrue(
             element(in: app, identifier: "app.controlBar.stop")
                 .waitForExistence(timeout: 5)
@@ -76,15 +76,17 @@ final class SmokeTests: XCTestCase {
 
     func testInterviewLensSmokeUsesOnePanelAndKeepsMainBlocksStable() {
         let app = launchApp(scenario: "interviewLensSmoke")
-        app.typeKey("l", modifierFlags: [.command, .shift])
+        let toggle = element(in: app, identifier: "app.controlBar.toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.click()
 
         let answer = element(in: app, identifier: "copilot.interviewLens.answer")
         let followUps = element(in: app, identifier: "copilot.interviewLens.followUps")
         XCTAssertTrue(answer.waitForExistence(timeout: 8))
         XCTAssertTrue(followUps.waitForExistence(timeout: 5))
         XCTAssertFalse(element(in: app, identifier: "copilot.interviewLens.question").exists)
-        let micMeter = element(in: app, identifier: "copilot.audio.micMeter")
-        let systemMeter = element(in: app, identifier: "copilot.audio.systemMeter")
+        let micMeter = element(in: app, accessibilityLabel: "Mic 音频电平")
+        let systemMeter = element(in: app, accessibilityLabel: "System 音频电平")
         XCTAssertTrue(micMeter.waitForExistence(timeout: 5))
         XCTAssertTrue(systemMeter.waitForExistence(timeout: 5))
         XCTAssertTrue(hasAudibleMeterValue(micMeter))
@@ -180,11 +182,11 @@ final class SmokeTests: XCTestCase {
         let toggle = element(in: app, identifier: "app.controlBar.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
-        app.typeKey("l", modifierFlags: [.command, .shift])
+        toggle.click()
         let stop = element(in: app, identifier: "app.controlBar.stop")
         XCTAssertTrue(stop.waitForExistence(timeout: 5))
 
-        app.typeKey("l", modifierFlags: [.command, .shift])
+        stop.click()
         let generateNotes = element(in: app, identifier: "app.generateNotesButton")
         XCTAssertTrue(generateNotes.waitForExistence(timeout: 5))
         generateNotes.click()
@@ -290,6 +292,12 @@ final class SmokeTests: XCTestCase {
 
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    private func element(in app: XCUIApplication, accessibilityLabel: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", accessibilityLabel)
+        ).firstMatch
     }
 
     private func elements(

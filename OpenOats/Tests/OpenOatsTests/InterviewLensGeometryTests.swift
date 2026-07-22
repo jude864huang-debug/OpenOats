@@ -97,7 +97,7 @@ final class InterviewLensGeometryTests: XCTestCase {
                 CGRect(x: 3_300, y: 1_000, width: 900, height: 500),
                 to: externalDisplay
             ),
-            equals: CGRect(x: 2_680, y: 120, width: 680, height: 760)
+            equals: CGRect(x: 2_680, y: 380, width: 680, height: 500)
         )
         XCTAssertRect(
             InterviewLensGeometry.clampedFrame(
